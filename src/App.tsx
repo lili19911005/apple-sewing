@@ -152,7 +152,7 @@ function App() {
     }
     setIsLoadingPages(true)
     setError('')
-    renderPdfPages(files).then((pages) => {
+    renderPdfPages(files, 0.85).then((pages) => {
       if (cancelled) return
       const editable = pages.map((page) => ({ ...page, crop: { left: 0, right: 0, top: 0, bottom: 0 } }))
       setPdfPages(editable)
@@ -667,22 +667,43 @@ function ProjectionPage({ page, index, colorMode, lineWidth, style }: { page: Ed
       for (let pixel = 0; pixel < mask.length; pixel++) {
         const offset = pixel * 4
         const luminance = (sourcePixels[offset] * 0.299 + sourcePixels[offset + 1] * 0.587 + sourcePixels[offset + 2] * 0.114)
-        mask[pixel] = sourcePixels[offset + 3] > 0 && luminance < 242 ? 1 : 0
+        mask[pixel] = sourcePixels[offset + 3] > 0 && luminance < 218 ? 1 : 0
       }
-      const radius = Math.min(4, Math.floor(Math.max(0, lineWidth) / 2))
+      const cleanedMask = new Uint8Array(mask)
+      for (let y = 1; y < displayHeight - 1; y++) for (let x = 1; x < displayWidth - 1; x++) {
+        const pixel = y * displayWidth + x
+        if (!mask[pixel]) continue
+        let neighbors = 0
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && mask[(y + dy) * displayWidth + x + dx]) neighbors++
+        if (neighbors < 2) cleanedMask[pixel] = 0
+      }
+      const radius = Math.min(4, Math.ceil(Math.max(0, lineWidth - 1) / 2))
+      const maskCanvas = document.createElement('canvas')
+      maskCanvas.width = displayWidth; maskCanvas.height = displayHeight
+      const maskContext = maskCanvas.getContext('2d')!
+      const maskImage = new ImageData(displayWidth, displayHeight)
+      for (let pixel = 0; pixel < cleanedMask.length; pixel++) maskImage.data[pixel * 4 + 3] = cleanedMask[pixel] ? 255 : 0
+      maskContext.putImageData(maskImage, 0, 0)
+      const expandedCanvas = document.createElement('canvas')
+      expandedCanvas.width = displayWidth; expandedCanvas.height = displayHeight
+      const expandedContext = expandedCanvas.getContext('2d', { willReadFrequently: true })!
+      for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) if (Math.hypot(dx, dy) <= radius + .35) expandedContext.drawImage(maskCanvas, dx, dy)
+      const smoothedCanvas = document.createElement('canvas')
+      smoothedCanvas.width = displayWidth; smoothedCanvas.height = displayHeight
+      const smoothedContext = smoothedCanvas.getContext('2d', { willReadFrequently: true })!
+      smoothedContext.filter = `blur(${lineWidth === 0 ? .35 : .55}px)`
+      smoothedContext.drawImage(expandedCanvas, 0, 0)
+      const alpha = smoothedContext.getImageData(0, 0, displayWidth, displayHeight).data
       const background = colorMode === 'dark' ? [17, 17, 17] : [255, 255, 255]
       const ink = colorMode === 'dark' ? [52, 220, 143] : [10, 10, 10]
       const output = new ImageData(displayWidth, displayHeight)
       for (let y = 0; y < displayHeight; y++) for (let x = 0; x < displayWidth; x++) {
-        let isLine = false
-        for (let dy = -radius; dy <= radius && !isLine; dy++) for (let dx = -radius; dx <= radius; dx++) {
-          const distance = Math.hypot(dx, dy)
-          const sampleX = x + dx; const sampleY = y + dy
-          if (distance <= radius && sampleX >= 0 && sampleX < displayWidth && sampleY >= 0 && sampleY < displayHeight && mask[sampleY * displayWidth + sampleX]) { isLine = true; break }
-        }
         const offset = (y * displayWidth + x) * 4
-        const color = isLine ? ink : background
-        output.data[offset] = color[0]; output.data[offset + 1] = color[1]; output.data[offset + 2] = color[2]; output.data[offset + 3] = 255
+        const ratio = alpha[offset + 3] / 255
+        output.data[offset] = Math.round(background[0] * (1 - ratio) + ink[0] * ratio)
+        output.data[offset + 1] = Math.round(background[1] * (1 - ratio) + ink[1] * ratio)
+        output.data[offset + 2] = Math.round(background[2] * (1 - ratio) + ink[2] * ratio)
+        output.data[offset + 3] = 255
       }
       context.putImageData(output, 0, 0)
     }
