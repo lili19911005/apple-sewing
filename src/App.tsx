@@ -495,7 +495,7 @@ function PdfStitchEditor({
       <button className={tab === 'projection' ? 'active' : ''} onClick={() => onTab('projection')}>投影</button>
       <span>{pages.length} 个页面 · 在预览中拖动纸样调整顺序</span>
     </div>
-    {loading ? <div className="pdf-editor-loading"><RefreshCw className="spin" /> 正在解析 PDF 页面并生成预览…</div> : tab === 'projection' ? <ProjectionFeature pages={pages} /> : <div className="pdf-editor-body">
+    {loading ? <div className="pdf-editor-loading"><RefreshCw className="spin" /> 正在解析 PDF 页面并生成预览…</div> : tab === 'projection' ? <ProjectionFeature pages={pages} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} /> : <div className="pdf-editor-body">
       <div className="pdf-editor-canvas">
         {tab === 'preview' && <StitchPreview pages={pages} selectedId={selectedId} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} onSelect={onSelect} onMove={onMove} />}
       </div>
@@ -516,7 +516,7 @@ type ProjectionStep = 'calibrate' | 'display'
 type ProjectionColorMode = 'white' | 'dark'
 type ProjectionLine = { start: { x: number; y: number }; end: { x: number; y: number } }
 
-function ProjectionFeature({ pages }: { pages: EditablePdfPage[] }) {
+function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalGap }: { pages: EditablePdfPage[]; direction: 'horizontal' | 'vertical'; perLine: number; horizontalGap: number; verticalGap: number }) {
   const [step, setStep] = useState<ProjectionStep>('calibrate')
   const [widthCm, setWidthCm] = useState(24)
   const [heightCm, setHeightCm] = useState(16)
@@ -542,12 +542,23 @@ function ProjectionFeature({ pages }: { pages: EditablePdfPage[] }) {
     width: Math.max(1, page.widthPt * 25.4 / 72 - page.crop.left - page.crop.right),
     height: Math.max(1, page.heightPt * 25.4 / 72 - page.crop.top - page.crop.bottom),
   }))
-  const pageGap = Math.max(0, pixelsPerCm * 0.2)
-  const columns = Math.max(1, Math.ceil(Math.sqrt(pages.length)))
-  const rowHeights = Array.from({ length: Math.ceil(pages.length / columns) }, (_, row) => Math.max(...pageSizes.slice(row * columns, row * columns + columns).map((size) => size.height * pixelsPerCm / 10), 1))
-  const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...pageSizes.filter((_, index) => index % columns === column).map((size) => size.width * pixelsPerCm / 10), 1))
-  const projectionWidth = columnWidths.reduce((sum, value) => sum + value, 0) + pageGap * Math.max(0, columns - 1)
-  const projectionHeight = rowHeights.reduce((sum, value) => sum + value, 0) + pageGap * Math.max(0, rowHeights.length - 1)
+  const maxWidth = Math.max(...pageSizes.map((size) => size.width))
+  const maxHeight = Math.max(...pageSizes.map((size) => size.height))
+  const pageScale = pixelsPerCm / 10
+  const cellWidth = maxWidth * pageScale
+  const cellHeight = maxHeight * pageScale
+  const stepX = cellWidth - horizontalGap * pageScale
+  const stepY = cellHeight - verticalGap * pageScale
+  const rowCount = direction === 'vertical' ? Math.min(Math.max(1, perLine), pages.length) : Math.ceil(pages.length / Math.max(1, perLine))
+  const columnCount = direction === 'horizontal' ? Math.min(Math.max(1, perLine), pages.length) : Math.ceil(pages.length / Math.max(1, perLine))
+  const rawPositions = pages.map((_, index) => ({
+    x: (direction === 'horizontal' ? index % columnCount : Math.floor(index / rowCount)) * stepX,
+    y: (direction === 'vertical' ? index % rowCount : Math.floor(index / columnCount)) * stepY,
+  }))
+  const minX = Math.min(...rawPositions.map((position) => position.x))
+  const minY = Math.min(...rawPositions.map((position) => position.y))
+  const projectionWidth = Math.max(...rawPositions.map((position, index) => position.x + pageSizes[index].width * pageScale)) - minX
+  const projectionHeight = Math.max(...rawPositions.map((position, index) => position.y + pageSizes[index].height * pageScale)) - minY
 
   function updateCalibrationScale(event: React.PointerEvent<HTMLElement>) {
     if (!calibrationRef.current) return
@@ -563,15 +574,9 @@ function ProjectionFeature({ pages }: { pages: EditablePdfPage[] }) {
   }
 
   function renderProjectionPages() {
-    const rowOffsets: number[] = []
-    rowHeights.reduce((offset, height, index) => { rowOffsets[index] = offset; return offset + height + pageGap }, 0)
-    const columnOffsets: number[] = []
-    columnWidths.reduce((offset, width, index) => { columnOffsets[index] = offset; return offset + width + pageGap }, 0)
     return pages.map((page, index) => {
-      const row = Math.floor(index / columns)
-      const column = index % columns
       const size = pageSizes[index]
-      return <ProjectionPage key={page.id} page={page} index={index} colorMode={colorMode} lineWidth={lineWidth} rotation={rotation} flipX={flipX} flipY={flipY} style={{ position: 'absolute', left: columnOffsets[column], top: rowOffsets[row], width: size.width * pixelsPerCm / 10, height: size.height * pixelsPerCm / 10 }} />
+      return <ProjectionPage key={page.id} page={page} index={index} colorMode={colorMode} lineWidth={lineWidth} rotation={rotation} flipX={flipX} flipY={flipY} style={{ position: 'absolute', left: rawPositions[index].x - minX, top: rawPositions[index].y - minY, width: size.width * pageScale, height: size.height * pageScale }} />
     })
   }
 
