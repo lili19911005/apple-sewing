@@ -223,6 +223,7 @@ a { color: inherit; text-decoration: none; }
 .projection-exit { margin-left: 4px; }
 .projection-canvas { position: relative; margin: 0 auto; background: #fff; background-image: linear-gradient(#eef1ed 1px, transparent 1px), linear-gradient(90deg, #eef1ed 1px, transparent 1px); background-size: 10px 10px; transform-origin: 0 0; }
 .projection-art { position: relative; transform-origin: 0 0; }
+.projection-view-transform { position: relative; transform-origin: center center; }
 .projection-page { position: absolute; overflow: hidden; border-style: solid; border-color: transparent; background: white; transform-origin: center; box-shadow: 0 2px 5px rgba(0,0,0,.18); }
 .projection-page img { position: absolute; max-width: none; object-fit: fill; }
 .projection-page > span { position: absolute; left: 7px; top: 7px; min-width: 22px; height: 22px; padding: 0 5px; display: grid; place-items: center; border-radius: 12px; background: rgba(20,92,67,.85); color: white; font: 600 9px 'DM Mono'; }
