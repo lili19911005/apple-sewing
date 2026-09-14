@@ -194,6 +194,9 @@ a { color: inherit; text-decoration: none; }
 .empty-stitch-preview { min-height: 300px; display: grid; place-items: center; color: #87948c; font-size: 11px; }
 .pdf-page-preview { position: relative; width: 100%; min-width: 90px; max-width: 260px; padding: 0; border: 2px solid transparent; background: white; overflow: hidden; box-shadow: 0 4px 12px rgba(31, 52, 42, .1); }
 .pdf-page-preview:hover, .pdf-page-preview.selected { border-color: #1876ed; }
+.pdf-page-preview[draggable="true"] { cursor: grab; }
+.pdf-page-preview[draggable="true"]:active, .pdf-page-preview.is-dragging { cursor: grabbing; }
+.pdf-page-preview.drop-target { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(201,243,91,.55), 0 4px 14px rgba(31,52,42,.16); }
 .pdf-page-preview img { position: absolute; display: block; object-fit: fill; background: white; max-width: none; }
 .pdf-page-preview > span { position: absolute; left: 6px; top: 6px; min-width: 21px; height: 21px; padding: 0 5px; display: grid; place-items: center; border-radius: 11px; background: rgba(20, 92, 67, .9); color: white; font: 600 9px 'DM Mono'; }
 .pdf-page-preview.compact { min-width: 0; width: 55px; height: 72px; aspect-ratio: auto !important; flex: 0 0 55px; border-width: 1px; box-shadow: none; pointer-events: none; }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight, BookOpen, Check, Database, Download, FileImage, Files, FileText, FileUp,
-  GripVertical, ImagePlus, LockKeyhole, LogOut, Menu, PackagePlus, Palette, Plus,
+  ImagePlus, LockKeyhole, LogOut, Menu, PackagePlus, Palette, Plus,
   RefreshCw, Ruler, Save, Scissors, ShieldCheck, Sparkles, Trash2, UploadCloud, User,
   WandSparkles, X, Zap,
 } from 'lucide-react'
@@ -92,7 +92,7 @@ function App() {
   const [mergeVerticalGap, setMergeVerticalGap] = useState(0)
   const [stitchDirection, setStitchDirection] = useState<'horizontal' | 'vertical'>('horizontal')
   const [pdfPages, setPdfPages] = useState<EditablePdfPage[]>([])
-  const [pdfEditorTab, setPdfEditorTab] = useState<'preview' | 'order' | 'crop'>('preview')
+  const [pdfEditorTab, setPdfEditorTab] = useState<'preview' | 'crop'>('preview')
   const [selectedPdfPage, setSelectedPdfPage] = useState('')
   const [isLoadingPages, setIsLoadingPages] = useState(false)
   const [quality, setQuality] = useState(2)
@@ -471,13 +471,13 @@ function PdfStitchEditor({
 }: {
   pages: EditablePdfPage[]
   loading: boolean
-  tab: 'preview' | 'order' | 'crop'
+  tab: 'preview' | 'crop'
   selectedId: string
   direction: 'horizontal' | 'vertical'
   perLine: number
   horizontalGap: number
   verticalGap: number
-  onTab: (tab: 'preview' | 'order' | 'crop') => void
+  onTab: (tab: 'preview' | 'crop') => void
   onSelect: (id: string) => void
   onDirection: (direction: 'horizontal' | 'vertical') => void
   onPerLine: (count: number) => void
@@ -494,14 +494,12 @@ function PdfStitchEditor({
   return <section className="pdf-stitch-editor">
     <div className="pdf-editor-tabs">
       <button className={tab === 'preview' ? 'active' : ''} onClick={() => onTab('preview')}>拼合预览</button>
-      <button className={tab === 'order' ? 'active' : ''} onClick={() => onTab('order')}>页面调整</button>
       <button className={tab === 'crop' ? 'active' : ''} onClick={() => onTab('crop')}>裁切预览</button>
-      <span>{pages.length} 个页面</span>
+      <span>{pages.length} 个页面 · 在预览中拖动纸样调整顺序</span>
     </div>
     {loading ? <div className="pdf-editor-loading"><RefreshCw className="spin" /> 正在解析 PDF 页面并生成预览…</div> : <div className="pdf-editor-body">
       <div className="pdf-editor-canvas">
-        {tab === 'preview' && <StitchPreview pages={pages} selectedId={selectedId} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} onSelect={onSelect} />}
-        {tab === 'order' && <div className="page-order-list">{pages.map((page, index) => <div className={`order-card ${page.id === selectedId ? 'selected' : ''}`} key={page.id} draggable onDragStart={(event) => event.dataTransfer.setData('text/pdf-page', page.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onMove(event.dataTransfer.getData('text/pdf-page'), page.id) }} onClick={() => onSelect(page.id)}><GripVertical /><span className="order-index">{index + 1}</span><CroppedPdfPage page={page} compact /><span className="order-name"><b>{page.fileName}</b><small>第 {page.pageNumber} 页 · 拖动调整顺序</small></span><button title="删除此页" onClick={(event) => { event.stopPropagation(); onDelete(page.id) }}><Trash2 size={15} /></button></div>)}</div>}
+        {tab === 'preview' && <StitchPreview pages={pages} selectedId={selectedId} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} onSelect={onSelect} onMove={onMove} />}
         {tab === 'crop' && selected && <div className="crop-stage"><div className="crop-page-wrap"><CroppedPdfPage page={selected} large /></div><div className="crop-size-note">裁切后约 {(totalWidthMm - selected.crop.left - selected.crop.right).toFixed(1)} × {(totalHeightMm - selected.crop.top - selected.crop.bottom).toFixed(1)} mm</div></div>}
       </div>
       <aside className="pdf-editor-controls">
@@ -517,7 +515,7 @@ function PdfStitchEditor({
   </section>
 }
 
-function StitchPreview({ pages, selectedId, direction, perLine, horizontalGap, verticalGap, onSelect }: {
+function StitchPreview({ pages, selectedId, direction, perLine, horizontalGap, verticalGap, onSelect, onMove }: {
   pages: EditablePdfPage[]
   selectedId: string
   direction: 'horizontal' | 'vertical'
@@ -525,7 +523,10 @@ function StitchPreview({ pages, selectedId, direction, perLine, horizontalGap, v
   horizontalGap: number
   verticalGap: number
   onSelect: (id: string) => void
+  onMove: (from: string, to: string) => void
 }) {
+  const [draggingId, setDraggingId] = useState('')
+  const [dropTargetId, setDropTargetId] = useState('')
   if (!pages.length) return <div className="empty-stitch-preview">暂无可预览页面</div>
   const sizes = pages.map((page) => ({
     width: Math.max(1, page.widthPt * 25.4 / 72 - page.crop.left - page.crop.right),
@@ -548,15 +549,15 @@ function StitchPreview({ pages, selectedId, direction, perLine, horizontalGap, v
   const minY = Math.min(...rawPositions.map((position) => position.y))
   const maxX = Math.max(...rawPositions.map((position, index) => position.x + sizes[index].width * scale))
   const maxY = Math.max(...rawPositions.map((position, index) => position.y + sizes[index].height * scale))
-  return <div className="stitch-positioned-preview" style={{ width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) }}>{pages.map((page, index) => <CroppedPdfPage key={page.id} page={page} index={index} selected={page.id === selectedId} onClick={() => onSelect(page.id)} style={{ position: 'absolute', left: rawPositions[index].x - minX, top: rawPositions[index].y - minY, width: sizes[index].width * scale, height: sizes[index].height * scale, zIndex: index + 1 }} />)}</div>
+  return <div className="stitch-positioned-preview" style={{ width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) }}>{pages.map((page, index) => <CroppedPdfPage key={page.id} page={page} index={index} selected={page.id === selectedId} dropTarget={page.id === dropTargetId} draggable onClick={() => onSelect(page.id)} onDragStart={(event) => { event.dataTransfer.setData('text/pdf-page', page.id); event.dataTransfer.effectAllowed = 'move'; setDraggingId(page.id) }} onDragEnd={() => { setDraggingId(''); setDropTargetId('') }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTargetId(page.id) }} onDragLeave={() => setDropTargetId((current) => current === page.id ? '' : current)} onDrop={(event) => { event.preventDefault(); const fromId = event.dataTransfer.getData('text/pdf-page'); onMove(fromId, page.id); setDraggingId(''); setDropTargetId('') }} className={draggingId === page.id ? 'is-dragging' : ''} style={{ position: 'absolute', left: rawPositions[index].x - minX, top: rawPositions[index].y - minY, width: sizes[index].width * scale, height: sizes[index].height * scale, zIndex: index + 1 }} />)}</div>
 }
 
-function CroppedPdfPage({ page, index, selected, compact, large, onClick, style }: { page: EditablePdfPage; index?: number; selected?: boolean; compact?: boolean; large?: boolean; onClick?: () => void; style?: React.CSSProperties }) {
+function CroppedPdfPage({ page, index, selected, compact, large, draggable, dropTarget, onClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, className, style }: { page: EditablePdfPage; index?: number; selected?: boolean; compact?: boolean; large?: boolean; draggable?: boolean; dropTarget?: boolean; onClick?: () => void; onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void; onDragEnd?: (event: React.DragEvent<HTMLButtonElement>) => void; onDragOver?: (event: React.DragEvent<HTMLButtonElement>) => void; onDragLeave?: (event: React.DragEvent<HTMLButtonElement>) => void; onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void; className?: string; style?: React.CSSProperties }) {
   const widthMm = page.widthPt * 25.4 / 72
   const heightMm = page.heightPt * 25.4 / 72
   const croppedWidth = Math.max(1, widthMm - page.crop.left - page.crop.right)
   const croppedHeight = Math.max(1, heightMm - page.crop.top - page.crop.bottom)
-  return <button className={`pdf-page-preview ${selected ? 'selected' : ''} ${compact ? 'compact' : ''} ${large ? 'large' : ''}`} onClick={onClick} style={{ aspectRatio: `${croppedWidth} / ${croppedHeight}`, ...style }}><img src={page.preview} alt={`${page.fileName} 第 ${page.pageNumber} 页`} style={{ width: `${widthMm / croppedWidth * 100}%`, height: `${heightMm / croppedHeight * 100}%`, left: `${-page.crop.left / croppedWidth * 100}%`, top: `${-page.crop.top / croppedHeight * 100}%` }} />{index !== undefined && <span>{index + 1}</span>}</button>
+  return <button className={`pdf-page-preview ${selected ? 'selected' : ''} ${dropTarget ? 'drop-target' : ''} ${compact ? 'compact' : ''} ${large ? 'large' : ''} ${className ?? ''}`} draggable={draggable} onClick={onClick} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} style={{ aspectRatio: `${croppedWidth} / ${croppedHeight}`, ...style }}><img src={page.preview} alt={`${page.fileName} 第 ${page.pageNumber} 页`} style={{ width: `${widthMm / croppedWidth * 100}%`, height: `${heightMm / croppedHeight * 100}%`, left: `${-page.crop.left / croppedWidth * 100}%`, top: `${-page.crop.top / croppedHeight * 100}%` }} />{index !== undefined && <span>{index + 1}</span>}</button>
 }
 
 function containedImagePoint(event: React.MouseEvent<HTMLDivElement>) {
