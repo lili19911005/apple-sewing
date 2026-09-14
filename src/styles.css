@@ -190,7 +190,7 @@ a { color: inherit; text-decoration: none; }
 .overlap-stepper input { min-width: 0; width: 100%; border: 0; padding: 0 7px; text-align: center; outline: none; font: 600 11px 'DM Mono'; }
 .overlap-stepper span { display: grid; place-items: center; color: #89958e; font-size: 8px; }
 .stitch-positioned-preview { position: relative; min-width: 1px; min-height: 1px; margin: 0 auto; transition: width .18s ease, height .18s ease; }
-.stitch-positioned-preview .pdf-page-preview { outline: 1px dashed rgba(255, 71, 87, .48); outline-offset: -1px; }
+.stitch-positioned-preview .pdf-page-preview { outline: 1px dashed rgba(157, 169, 160, .42); outline-offset: -1px; }
 .empty-stitch-preview { min-height: 300px; display: grid; place-items: center; color: #87948c; font-size: 11px; }
 .pdf-page-preview { position: relative; width: 100%; min-width: 90px; max-width: 260px; padding: 0; border: 2px solid transparent; background: white; overflow: hidden; box-shadow: 0 4px 12px rgba(31, 52, 42, .1); }
 .pdf-page-preview:hover, .pdf-page-preview.selected { border-color: #1876ed; }
