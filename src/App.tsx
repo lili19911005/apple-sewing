@@ -642,12 +642,53 @@ function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalG
 }
 
 function ProjectionPage({ page, index, colorMode, lineWidth, style }: { page: EditablePdfPage; index: number; colorMode: ProjectionColorMode; lineWidth: number; style: React.CSSProperties }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const widthMm = page.widthPt * 25.4 / 72
   const heightMm = page.heightPt * 25.4 / 72
   const croppedWidth = Math.max(1, widthMm - page.crop.left - page.crop.right)
   const croppedHeight = Math.max(1, heightMm - page.crop.top - page.crop.bottom)
-  const filter = colorMode === 'dark' ? `invert(1) sepia(1) saturate(${Math.max(1, lineWidth + 1)}) hue-rotate(70deg)` : lineWidth === 0 ? 'contrast(.75)' : `contrast(${1 + lineWidth * .08})`
-  return <div className={`projection-page ${colorMode === 'dark' ? 'dark-page' : ''}`} style={{ ...style, borderWidth: lineWidth === 0 ? 0 : Math.min(7, lineWidth) }}><img src={page.preview} alt={`${page.fileName} 第 ${page.pageNumber} 页`} style={{ width: `${widthMm / croppedWidth * 100}%`, height: `${heightMm / croppedHeight * 100}%`, left: `${-page.crop.left / croppedWidth * 100}%`, top: `${-page.crop.top / croppedHeight * 100}%`, filter }} /><span>{index + 1}</span></div>
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const image = new Image()
+    image.onload = () => {
+      const displayWidth = Math.max(1, Math.round(Number(style.width) || 1))
+      const displayHeight = Math.max(1, Math.round(Number(style.height) || 1))
+      canvas.width = displayWidth
+      canvas.height = displayHeight
+      const context = canvas.getContext('2d', { willReadFrequently: true })!
+      context.clearRect(0, 0, displayWidth, displayHeight)
+      const drawWidth = displayWidth * widthMm / croppedWidth
+      const drawHeight = displayHeight * heightMm / croppedHeight
+      context.drawImage(image, -displayWidth * page.crop.left / croppedWidth, -displayHeight * page.crop.top / croppedHeight, drawWidth, drawHeight)
+      const source = context.getImageData(0, 0, displayWidth, displayHeight)
+      const sourcePixels = source.data
+      const mask = new Uint8Array(displayWidth * displayHeight)
+      for (let pixel = 0; pixel < mask.length; pixel++) {
+        const offset = pixel * 4
+        const luminance = (sourcePixels[offset] * 0.299 + sourcePixels[offset + 1] * 0.587 + sourcePixels[offset + 2] * 0.114)
+        mask[pixel] = sourcePixels[offset + 3] > 0 && luminance < 242 ? 1 : 0
+      }
+      const radius = Math.min(4, Math.floor(Math.max(0, lineWidth) / 2))
+      const background = colorMode === 'dark' ? [17, 17, 17] : [255, 255, 255]
+      const ink = colorMode === 'dark' ? [52, 220, 143] : [10, 10, 10]
+      const output = new ImageData(displayWidth, displayHeight)
+      for (let y = 0; y < displayHeight; y++) for (let x = 0; x < displayWidth; x++) {
+        let isLine = false
+        for (let dy = -radius; dy <= radius && !isLine; dy++) for (let dx = -radius; dx <= radius; dx++) {
+          const distance = Math.hypot(dx, dy)
+          const sampleX = x + dx; const sampleY = y + dy
+          if (distance <= radius && sampleX >= 0 && sampleX < displayWidth && sampleY >= 0 && sampleY < displayHeight && mask[sampleY * displayWidth + sampleX]) { isLine = true; break }
+        }
+        const offset = (y * displayWidth + x) * 4
+        const color = isLine ? ink : background
+        output.data[offset] = color[0]; output.data[offset + 1] = color[1]; output.data[offset + 2] = color[2]; output.data[offset + 3] = 255
+      }
+      context.putImageData(output, 0, 0)
+    }
+    image.src = page.preview
+  }, [page.preview, page.crop.left, page.crop.top, widthMm, heightMm, croppedWidth, croppedHeight, colorMode, lineWidth, style.width, style.height])
+  return <div className={`projection-page ${colorMode === 'dark' ? 'dark-page' : ''}`} style={{ ...style, borderWidth: 0 }}><canvas ref={canvasRef} aria-label={`${page.fileName} 第 ${page.pageNumber} 页`} role="img" /><span>{index + 1}</span></div>
 }
 
 function StitchPreview({ pages, selectedId, direction, perLine, horizontalGap, verticalGap, onSelect, onMove }: {
