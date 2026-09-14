@@ -260,6 +260,51 @@ a { color: inherit; text-decoration: none; }
 .mockup-result > img { display: block; width: 100%; max-height: 680px; object-fit: contain; background: #eef1ec; }
 .mockup-result > p { color: #78867e; font-size: 10px; line-height: 1.6; margin: 12px 0 0; }
 
+.drafting-module { background: #f9faf6; }
+.drafting-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid #dce2da; }
+.drafting-toolbar h3 { margin: 8px 0 4px; font-size: 21px; }
+.drafting-toolbar p { margin: 0; color: #87948c; font-size: 10px; }
+.drafting-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.drafting-actions button { min-height: 36px; border: 1px solid #d2dbd2; background: white; color: #52645a; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }
+.drafting-actions button:hover { border-color: var(--green); color: var(--green); }
+.drafting-actions button.primary { border-color: var(--green); color: white; }
+.drafting-layout { display: grid; grid-template-columns: 235px minmax(420px, 1fr) 205px; gap: 16px; margin-top: 18px; align-items: start; }
+.drafting-panel, .draft-validation { border: 1px solid #dce3da; background: white; padding: 16px; }
+.draft-section-title { display: flex; align-items: center; gap: 7px; padding-bottom: 11px; margin-bottom: 13px; border-bottom: 1px solid #edf0eb; color: var(--green); font-size: 11px; font-weight: 800; }
+.draft-section-title svg { width: 15px; }
+.draft-section-title small { margin-left: auto; color: #99a49d; font-size: 8px; font-weight: 400; }
+.measurement-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.measurement-grid label, .seam-field { color: #6b7a71; font-size: 9px; }
+.measurement-grid input { display: block; width: 100%; height: 34px; margin-top: 5px; border: 1px solid #d6ded6; background: #fbfcf9; padding: 0 8px; outline: none; font: 500 11px 'DM Mono'; color: var(--ink); }
+.measurement-grid input:focus, .seam-field input:focus { border-color: var(--green); background: white; }
+.draft-preset-list { display: grid; gap: 7px; margin-bottom: 20px; }
+.draft-preset-list button { border: 1px solid #dce3da; background: #fbfcf9; padding: 9px 10px; text-align: left; color: #52645a; }
+.draft-preset-list button.selected { border-color: var(--green); background: #edf5d9; color: var(--green); box-shadow: inset 3px 0 var(--green); }
+.draft-preset-list b, .draft-preset-list small { display: block; }
+.draft-preset-list b { font-size: 10px; }
+.draft-preset-list small { margin-top: 4px; color: #89968e; font-size: 8px; }
+.seam-field { display: block; }
+.seam-field .number-input { height: 36px; margin-top: 5px; }
+.draft-calculations { display: grid; gap: 7px; margin-top: 18px; padding: 11px; background: #f1f4ef; color: #65756c; font: 9px 'DM Mono'; line-height: 1.35; }
+.draft-calculations b { color: var(--green); font: 800 10px 'Noto Sans SC'; }
+.drafting-preview { min-width: 0; min-height: 620px; overflow: auto; padding: 15px; border: 1px solid #dce3da; background: #e9eee8; background-image: linear-gradient(#dfe5df 1px, transparent 1px), linear-gradient(90deg, #dfe5df 1px, transparent 1px); background-size: 25px 25px; }
+.drafting-preview svg { display: block; width: max(100%, 670px); height: auto; margin: auto; background: white; box-shadow: 0 5px 15px rgba(31,52,42,.12); }
+.draft-grid line { stroke: #dce4dc; stroke-width: .08; }
+.draft-main-lines path, .draft-main-lines line { fill: #fff; stroke: #145c43; stroke-width: .28; stroke-linejoin: round; stroke-linecap: round; }
+.draft-main-lines line { fill: none; }
+.seam-lines path { fill: none; stroke: #d28b42; stroke-width: calc(var(--seam) * 2); stroke-dasharray: 1.4 1; stroke-linejoin: round; opacity: .75; }
+.grain-lines line { stroke: #80958a; stroke-width: .16; stroke-dasharray: 1.2 .8; marker-end: url(#arrow); }
+.draft-labels text, .draft-dimensions text { fill: #52685b; font-family: 'Noto Sans SC', sans-serif; font-size: 1.7px; }
+.draft-dimensions line { stroke: #a7b8aa; stroke-width: .12; marker-start: url(#tick); marker-end: url(#tick); }
+.draft-validation h4 { margin: 0 0 14px; color: var(--green); font-size: 12px; }
+.draft-validation > div { display: flex; align-items: flex-start; gap: 7px; padding: 9px 0; border-top: 1px solid #edf0eb; font-size: 9px; line-height: 1.45; }
+.draft-validation > div svg { width: 14px; min-width: 14px; margin-top: 1px; }
+.draft-validation .valid { color: #4b6d5c; }
+.draft-validation .valid svg { color: var(--green); }
+.draft-validation .warning { color: #a96832; }
+.draft-validation .warning svg { color: #d48739; }
+.draft-validation p { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid #edf0eb; color: #87948c; font-size: 9px; line-height: 1.65; }
+
 .wide-workspace { max-width: 1320px; grid-template-columns: 270px 1fr; }
 .library-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid #dce2da; }
 .library-toolbar h3 { margin: 8px 0 0; font-size: 21px; }
@@ -352,6 +397,8 @@ footer > div:last-child { display: flex; gap: 22px; align-items: center; color: 
   .pattern-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pdf-editor-body { grid-template-columns: 1fr; }
   .pdf-editor-controls { border-left: 0; border-top: 1px solid #dce2da; }
+  .drafting-layout { grid-template-columns: 220px minmax(400px, 1fr); }
+  .draft-validation { grid-column: 1 / -1; }
 }
 
 @media (max-width: 720px) {
@@ -390,6 +437,12 @@ footer > div:last-child { display: flex; gap: 22px; align-items: center; color: 
   .pdf-editor-tabs > span { display: none; }
   .pdf-editor-canvas { padding: 12px; }
   .stitch-positioned-preview { margin-left: 0; }
+  .drafting-toolbar { flex-direction: column; }
+  .drafting-actions { justify-content: flex-start; }
+  .drafting-layout { grid-template-columns: 1fr; }
+  .draft-validation { grid-column: auto; }
+  .drafting-preview { min-height: 420px; padding: 8px; }
+  .drafting-preview svg { width: 680px; max-width: none; }
   .order-card { gap: 7px; }
   .library-toolbar { align-items: stretch; flex-direction: column; }
   .fabric-card { grid-template-columns: 110px 1fr; }

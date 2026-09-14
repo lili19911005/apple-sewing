@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight, BookOpen, Check, Database, Download, FileImage, Files, FileText, FileUp,
   GripVertical, ImagePlus, LockKeyhole, LogOut, Menu, PackagePlus, Palette, Plus,
-  RefreshCw, Save, Scissors, ShieldCheck, Sparkles, Trash2, UploadCloud, User,
+  RefreshCw, Ruler, Save, Scissors, ShieldCheck, Sparkles, Trash2, UploadCloud, User,
   WandSparkles, X, Zap,
 } from 'lucide-react'
 import {
@@ -10,8 +10,9 @@ import {
   renderPdfCover, renderPdfPages, type PdfPagePreview,
 } from './converters'
 import { deletePatternFile, getPatternFile, savePatternFile } from './patternLibrary'
+import PatternDrafting from './PatternDrafting'
 
-type ToolId = 'merge' | 'mockup' | 'pattern' | 'fabric'
+type ToolId = 'merge' | 'draft' | 'mockup' | 'pattern' | 'fabric'
 type UserInfo = { name: string; email: string }
 type FabricRecord = { id: string; name: string; image: string; length: number; material: string; source: string; createdAt: string }
 type PatternRecord = { id: string; title: string; size: string; fileName: string; cover: string; pageCount: number; fileSize: number; createdAt: string }
@@ -20,9 +21,10 @@ type EditablePdfPage = PdfPagePreview & { crop: CropMargins }
 
 const tools = [
   { id: 'merge' as const, number: '01', title: 'PDF 拼合 / 转 PLT', description: '分页纸样拼成大图、顺序合并，或提取线稿生成 HPGL/PLT。', icon: Files, accept: '.pdf,application/pdf', multiple: true, tag: '常用' },
-  { id: 'mockup' as const, number: '02', title: '样式 × 布料效果图', description: '点击衣服主体并上传布料图，生成保留褶皱明暗的换布效果。', icon: Palette, accept: 'image/png,image/jpeg,image/webp', multiple: false, tag: '智能' },
-  { id: 'pattern' as const, number: '03', title: '我的纸样库', description: '批量导入纸样 PDF，自动识别纸样标题、尺码并管理款式首图。', icon: BookOpen, accept: '.pdf,application/pdf', multiple: true, tag: '归档' },
-  { id: 'fabric' as const, number: '04', title: '我的布料库', description: '批量导入布料图片，记录长度、材质、来源并随时复用。', icon: Database, accept: 'image/png,image/jpeg,image/webp', multiple: true, tag: '管理' },
+  { id: 'draft' as const, number: '02', title: '参数化服装制版', description: '输入人体净尺寸与面料类型，生成女装基础上衣前后片和一片袖。', icon: Ruler, accept: '', multiple: false, tag: '制版' },
+  { id: 'mockup' as const, number: '03', title: '样式 × 布料效果图', description: '点击衣服主体并上传布料图，生成保留褶皱明暗的换布效果。', icon: Palette, accept: 'image/png,image/jpeg,image/webp', multiple: false, tag: '智能' },
+  { id: 'pattern' as const, number: '04', title: '我的纸样库', description: '批量导入纸样 PDF，自动识别纸样标题、尺码并管理款式首图。', icon: BookOpen, accept: '.pdf,application/pdf', multiple: true, tag: '归档' },
+  { id: 'fabric' as const, number: '05', title: '我的布料库', description: '批量导入布料图片，记录长度、材质、来源并随时复用。', icon: Database, accept: 'image/png,image/jpeg,image/webp', multiple: true, tag: '管理' },
 ]
 
 function formatBytes(bytes: number) {
@@ -282,6 +284,13 @@ function App() {
     finally { setIsWorking(false) }
   }
 
+  async function saveGeneratedPattern(file: File, title: string, size: string) {
+    const id = crypto.randomUUID()
+    const cover = await renderPdfCover(file)
+    await savePatternFile(id, file)
+    setPatterns((old) => [{ id, title, size, fileName: file.name, cover: cover.preview, pageCount: cover.pageCount, fileSize: file.size, createdAt: new Date().toISOString() }, ...old])
+  }
+
   function updatePattern(id: string, field: 'title' | 'size', value: string) {
     setPatterns((old) => old.map((pattern) => pattern.id === id ? { ...pattern, [field]: value } : pattern))
   }
@@ -335,7 +344,7 @@ function App() {
 
         <section className="tools-section" id="tools"><div className="section-heading"><div><span className="kicker">TOOLBOX</span><h2>选择你需要的工具</h2></div><p>转换、预览和资料管理集中在一个工作台。<br />所有参数都可以按实际生产需要调整。</p></div><div className="tool-cards five-tools">{tools.map((tool) => { const Icon = tool.icon; return <button key={tool.id} className={`tool-card ${activeTool === tool.id ? 'active' : ''}`} onClick={() => selectTool(tool.id)}><span className="tool-number">{tool.number}</span><span className="tool-tag">{tool.tag}</span><span className="tool-icon"><Icon /></span><h3>{tool.title}</h3><p>{tool.description}</p><span className="tool-link">打开工具 <ArrowRight size={17} /></span></button> })}</div></section>
 
-        <section className="workspace-section" id="workspace"><div className={`workspace-card ${activeTool === 'fabric' || activeTool === 'pattern' ? 'wide-workspace' : ''}`}>
+        <section className="workspace-section" id="workspace"><div className={`workspace-card ${activeTool === 'fabric' || activeTool === 'pattern' || activeTool === 'draft' ? 'wide-workspace' : ''}`}>
           <aside className="workspace-sidebar"><span className="kicker light">当前工具 · {active.number}</span><h2>{active.title}</h2><p>{active.description}</p><div className="steps"><div className="step active"><b>1</b><span>{activeTool === 'fabric' ? '批量导入' : '选择素材'}<small>支持拖拽或点击选择</small></span></div><div className="step active"><b>2</b><span>{activeTool === 'fabric' ? '补充资料' : '设置参数'}<small>按实际需求精细调整</small></span></div><div className={`step ${isWorking || mockupResult ? 'active' : ''}`}><b>3</b><span>{activeTool === 'fabric' ? '保存复用' : '生成下载'}<small>结果保存在你的设备</small></span></div></div><div className="privacy-note"><ShieldCheck /><span><b>本地优先</b><small>{activeTool === 'fabric' ? '布料资料保存在当前浏览器中。' : '文件不会上传到本站服务器。'}</small></span></div></aside>
           <div className="workspace-main">
             {isConverter && <>
@@ -365,6 +374,8 @@ function App() {
               </div>
               {isWorking && <Progress progress={progress} />}<button className="convert-button" disabled={isWorking || !files.length || (activeTool === 'merge' && mergeMode === 'sheet' && (isLoadingPages || !pdfPages.length))} onClick={convert}>{isWorking ? <><RefreshCw className="spin" /> 正在处理</> : <><Zap /> 开始转换并下载</>}</button>
             </>}
+
+            {activeTool === 'draft' && <PatternDrafting onSavePattern={saveGeneratedPattern} />}
 
             {activeTool === 'mockup' && <div className="mockup-workspace">
               <div className="mockup-guide"><b>1. 上传款式图</b><span>2. 点击衣服中间的大块色区</span><span>3. 确认绿色选区后生成</span></div>
