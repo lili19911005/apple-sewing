@@ -16,6 +16,7 @@ type ToolId = 'merge' | 'draft' | 'mockup' | 'pattern' | 'fabric'
 type UserInfo = { name: string; email: string }
 type FabricRecord = { id: string; name: string; image: string; length: number; material: string; source: string; createdAt: string }
 type PatternRecord = { id: string; title: string; size: string; fileName: string; cover: string; pageCount: number; fileSize: number; createdAt: string }
+type PatternMigrationItem = PatternRecord & { fileData: string; fileType: string }
 type CropMargins = { left: number; right: number; top: number; bottom: number }
 type EditablePdfPage = PdfPagePreview & { crop: CropMargins }
 
@@ -59,6 +60,15 @@ function dataUrlToFile(dataUrl: string, name: string) {
   const mime = meta.match(/data:(.*?);/)?.[1] ?? 'image/jpeg'
   const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0))
   return new File([bytes], name, { type: mime })
+}
+
+function blobToDataUrl(file: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('纸样文件读取失败。'))
+    reader.readAsDataURL(file)
+  })
 }
 
 function patternInfoFromFilename(fileName: string) {
@@ -114,7 +124,9 @@ function App() {
   const fabricInputRef = useRef<HTMLInputElement>(null)
   const patternInputRef = useRef<HTMLInputElement>(null)
   const patternCoverInputRef = useRef<HTMLInputElement>(null)
+  const patternMigrationInputRef = useRef<HTMLInputElement>(null)
   const [coverPatternId, setCoverPatternId] = useState('')
+  const [migrationNotice, setMigrationNotice] = useState('')
   const active = tools.find((tool) => tool.id === activeTool)!
   const isConverter = activeTool === 'merge'
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files])
@@ -284,6 +296,49 @@ function App() {
     finally { setIsWorking(false) }
   }
 
+  async function exportPatternMigration() {
+    setIsWorking(true); setError(''); setMigrationNotice('')
+    try {
+      const exported: PatternMigrationItem[] = []
+      for (const pattern of patterns) {
+        const storedFile = await getPatternFile(pattern.id)
+        if (!storedFile) throw new Error(`找不到「${pattern.title}」的 PDF 文件，无法导出完整迁移包。`)
+        exported.push({ ...pattern, fileData: await blobToDataUrl(storedFile), fileType: storedFile.type || 'application/pdf' })
+      }
+      const payload = { format: 'caifengbao-pattern-migration', version: 1, source: window.location.origin, exportedAt: new Date().toISOString(), patterns: exported }
+      const stamp = new Date().toISOString().slice(0, 10)
+      downloadBlob(new Blob([JSON.stringify(payload)], { type: 'application/json' }), `裁缝宝-纸样迁移-${stamp}.json`, 'application/json')
+      setMigrationNotice(`已导出 ${exported.length} 份纸样，请在生产地址导入这个 JSON 文件。`)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '纸样迁移包导出失败。') }
+    finally { setIsWorking(false) }
+  }
+
+  async function importPatternMigration(list: FileList | null) {
+    const migrationFile = list?.[0]
+    if (!migrationFile) return
+    setIsWorking(true); setError(''); setMigrationNotice('')
+    try {
+      const payload = JSON.parse(await migrationFile.text()) as { format?: string; version?: number; patterns?: PatternMigrationItem[] }
+      if (payload.format !== 'caifengbao-pattern-migration' || payload.version !== 1 || !Array.isArray(payload.patterns)) throw new Error('这不是有效的裁缝宝纸样迁移包。')
+      const existingKeys = new Set(patterns.map((pattern) => `${pattern.fileName}|${pattern.fileSize}|${pattern.title}|${pattern.size}`))
+      const imported: PatternRecord[] = []
+      let skipped = 0
+      for (const item of payload.patterns) {
+        if (!item.fileData || !item.fileName || !item.title) { skipped += 1; continue }
+        const key = `${item.fileName}|${item.fileSize}|${item.title}|${item.size}`
+        if (existingKeys.has(key)) { skipped += 1; continue }
+        const pdf = dataUrlToFile(item.fileData, item.fileName)
+        const id = crypto.randomUUID()
+        await savePatternFile(id, pdf)
+        imported.push({ id, title: item.title, size: item.size || '未标注', fileName: item.fileName, cover: item.cover, pageCount: item.pageCount, fileSize: pdf.size, createdAt: item.createdAt || new Date().toISOString() })
+        existingKeys.add(key)
+      }
+      setPatterns((old) => [...imported, ...old])
+      setMigrationNotice(`迁移完成：导入 ${imported.length} 份${skipped ? `，跳过 ${skipped} 份重复或不完整记录` : ''}。`)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '纸样迁移包导入失败。') }
+    finally { setIsWorking(false); if (patternMigrationInputRef.current) patternMigrationInputRef.current.value = '' }
+  }
+
   async function saveGeneratedPattern(file: File, title: string, size: string) {
     const id = crypto.randomUUID()
     const cover = await renderPdfCover(file)
@@ -388,7 +443,9 @@ function App() {
             {activeTool === 'pattern' && <div className="pattern-library">
               <input ref={patternInputRef} hidden type="file" accept=".pdf,application/pdf" multiple onChange={(event) => importPatterns(event.target.files)} />
               <input ref={patternCoverInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => replacePatternCover(event.target.files)} />
-              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patterns.length} 份纸样文件</h3></div><button className="primary" onClick={() => patternInputRef.current?.click()}><FileUp size={17} /> 批量导入 PDF</button></div>
+              <input ref={patternMigrationInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => importPatternMigration(event.target.files)} />
+              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patterns.length} 份纸样文件</h3><p className="migration-help">先在本地地址导出迁移包，再在生产地址导入；不会覆盖已有纸样。</p></div><div className="library-actions"><button onClick={exportPatternMigration} disabled={isWorking || !patterns.length}><Download size={15} /> 导出本地数据</button><button onClick={() => patternMigrationInputRef.current?.click()} disabled={isWorking}><FileUp size={15} /> 导入迁移包</button><button className="primary" onClick={() => patternInputRef.current?.click()}><FileUp size={17} /> 批量导入 PDF</button></div></div>
+              {migrationNotice && <div className="success-message">{migrationNotice}</div>}
               {patterns.length === 0 ? <button className="empty-library" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); importPatterns(event.dataTransfer.files) }} onClick={() => patternInputRef.current?.click()}><span className="upload-icon"><FileText /></span><h3>还没有纸样记录</h3><p>点击或拖入 PDF，系统会从文件名自动识别纸样名称和尺码。</p><small>示例：小红叶858上衣-M.pdf → 小红叶858上衣 · M</small></button> : <div className="pattern-grid">{patterns.map((pattern) => <article className="pattern-library-card" key={pattern.id}><div className="pattern-cover"><img src={pattern.cover} alt={pattern.title} /><button onClick={() => { setCoverPatternId(pattern.id); requestAnimationFrame(() => patternCoverInputRef.current?.click()) }}><ImagePlus size={14} /> 更换款式首图</button><span>{pattern.size}</span></div><div className="pattern-card-content"><input className="pattern-title-input" value={pattern.title} onChange={(event) => updatePattern(pattern.id, 'title', event.target.value)} aria-label="纸样标题" /><label>尺码<input value={pattern.size} onChange={(event) => updatePattern(pattern.id, 'size', event.target.value.toUpperCase())} /></label><div className="pattern-file-meta"><span><FileText size={13} /> {pattern.fileName}</span><small>{pattern.pageCount} 页 · {formatBytes(pattern.fileSize)}</small></div><div className="pattern-actions"><button onClick={() => downloadPattern(pattern)}><Download size={14} /> 下载 PDF</button><span><Save size={13} /> 自动保存</span><button className="danger" title="删除纸样" onClick={() => removePattern(pattern)}><Trash2 size={15} /></button></div></div></article>)}</div>}
             </div>}
 

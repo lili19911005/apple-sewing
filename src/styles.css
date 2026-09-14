@@ -310,6 +310,13 @@ a { color: inherit; text-decoration: none; }
 .library-toolbar h3 { margin: 8px 0 0; font-size: 21px; }
 .empty-library > small { margin-top: 8px; color: #9aa59e; font-size: 9px; }
 .pattern-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 22px; }
+.library-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.library-actions button { min-height: 36px; border: 1px solid #d2dbd2; background: white; color: #52645a; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }
+.library-actions button:hover { border-color: var(--green); color: var(--green); }
+.library-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.library-actions button.primary { border-color: var(--green); color: white; }
+.migration-help { margin: 5px 0 0; color: #87948c; font-size: 9px; }
+.success-message { margin-top: 14px; padding: 10px 12px; color: #35654f; background: #edf5d9; border: 1px solid #d5e6a7; font-size: 10px; }
 .pattern-library-card { min-width: 0; overflow: hidden; border: 1px solid #dce2da; background: white; }
 .pattern-cover { position: relative; height: 250px; overflow: hidden; background: #e8ece7; }
 .pattern-cover > img { width: 100%; height: 100%; object-fit: cover; }
@@ -445,6 +452,7 @@ footer > div:last-child { display: flex; gap: 22px; align-items: center; color: 
   .drafting-preview svg { width: 680px; max-width: none; }
   .order-card { gap: 7px; }
   .library-toolbar { align-items: stretch; flex-direction: column; }
+  .library-actions { justify-content: flex-start; }
   .fabric-card { grid-template-columns: 110px 1fr; }
   .pattern-grid { grid-template-columns: 1fr; }
   .fabric-card > img { width: 110px; }
