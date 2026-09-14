@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight, BookOpen, Check, Database, Download, FileImage, Files, FileText, FileUp,
-  ImagePlus, LockKeyhole, LogOut, Menu, PackagePlus, Palette, Plus,
+  FlipHorizontal2, FlipVertical2, ImagePlus, LockKeyhole, LogOut, Maximize2, Menu, PackagePlus, Palette, Plus,
+  RotateCw, Search, Split, 
   RefreshCw, Ruler, Save, Scissors, ShieldCheck, Sparkles, Trash2, UploadCloud, User,
   WandSparkles, X, Zap,
 } from 'lucide-react'
@@ -92,7 +93,7 @@ function App() {
   const [mergeVerticalGap, setMergeVerticalGap] = useState(0)
   const [stitchDirection, setStitchDirection] = useState<'horizontal' | 'vertical'>('horizontal')
   const [pdfPages, setPdfPages] = useState<EditablePdfPage[]>([])
-  const [pdfEditorTab, setPdfEditorTab] = useState<'preview' | 'crop'>('preview')
+  const [pdfEditorTab, setPdfEditorTab] = useState<'preview' | 'projection'>('preview')
   const [selectedPdfPage, setSelectedPdfPage] = useState('')
   const [isLoadingPages, setIsLoadingPages] = useState(false)
   const [quality, setQuality] = useState(2)
@@ -471,13 +472,13 @@ function PdfStitchEditor({
 }: {
   pages: EditablePdfPage[]
   loading: boolean
-  tab: 'preview' | 'crop'
+  tab: 'preview' | 'projection'
   selectedId: string
   direction: 'horizontal' | 'vertical'
   perLine: number
   horizontalGap: number
   verticalGap: number
-  onTab: (tab: 'preview' | 'crop') => void
+  onTab: (tab: 'preview' | 'projection') => void
   onSelect: (id: string) => void
   onDirection: (direction: 'horizontal' | 'vertical') => void
   onPerLine: (count: number) => void
@@ -487,20 +488,16 @@ function PdfStitchEditor({
   onApplyCropAll: (crop: CropMargins) => void
   onDelete: (id: string) => void
 }) {
-  const selected = pages.find((page) => page.id === selectedId) ?? pages[0]
   const sharedCrop = pages[0]?.crop ?? { left: 0, right: 0, top: 0, bottom: 0 }
-  const totalWidthMm = selected ? selected.widthPt * 25.4 / 72 : 0
-  const totalHeightMm = selected ? selected.heightPt * 25.4 / 72 : 0
   return <section className="pdf-stitch-editor">
     <div className="pdf-editor-tabs">
       <button className={tab === 'preview' ? 'active' : ''} onClick={() => onTab('preview')}>拼合预览</button>
-      <button className={tab === 'crop' ? 'active' : ''} onClick={() => onTab('crop')}>裁切预览</button>
+      <button className={tab === 'projection' ? 'active' : ''} onClick={() => onTab('projection')}>投影</button>
       <span>{pages.length} 个页面 · 在预览中拖动纸样调整顺序</span>
     </div>
-    {loading ? <div className="pdf-editor-loading"><RefreshCw className="spin" /> 正在解析 PDF 页面并生成预览…</div> : <div className="pdf-editor-body">
+    {loading ? <div className="pdf-editor-loading"><RefreshCw className="spin" /> 正在解析 PDF 页面并生成预览…</div> : tab === 'projection' ? <ProjectionFeature pages={pages} /> : <div className="pdf-editor-body">
       <div className="pdf-editor-canvas">
         {tab === 'preview' && <StitchPreview pages={pages} selectedId={selectedId} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} onSelect={onSelect} onMove={onMove} />}
-        {tab === 'crop' && selected && <div className="crop-stage"><div className="crop-page-wrap"><CroppedPdfPage page={selected} large /></div><div className="crop-size-note">裁切后约 {(totalWidthMm - selected.crop.left - selected.crop.right).toFixed(1)} × {(totalHeightMm - selected.crop.top - selected.crop.bottom).toFixed(1)} mm</div></div>}
       </div>
       <aside className="pdf-editor-controls">
         <h4>排列方式</h4><div className="segment-control compact"><button className={direction === 'horizontal' ? 'selected' : ''} onClick={() => onDirection('horizontal')}>横向排列</button><button className={direction === 'vertical' ? 'selected' : ''} onClick={() => onDirection('vertical')}>竖向排列</button></div>
@@ -509,10 +506,103 @@ function PdfStitchEditor({
         <label>纵向重叠 <small>用 ± 逐毫米校准上下接缝</small></label><div className="overlap-stepper"><button onClick={() => onVerticalGap(Math.max(0, verticalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={verticalGap} onChange={(e) => onVerticalGap(Math.max(0, Number(e.target.value)))} /><span>mm</span><button onClick={() => onVerticalGap(verticalGap + 1)}>＋</button></div>
         <div className="control-divider" />
         <h4>统一裁切边距</h4><p>这里设置的边距会同时应用到全部 PDF 页面。</p>
-        {selected ? <><div className="crop-input-grid">{(['left', 'right', 'top', 'bottom'] as const).map((side) => <label key={side}>{({ left: '左', right: '右', top: '上', bottom: '下' })[side]}<div className="number-input"><input type="number" min="0" step="0.5" value={sharedCrop[side]} onChange={(e) => onApplyCropAll({ ...sharedCrop, [side]: Math.max(0, Number(e.target.value)) })} /><span>mm</span></div></label>)}</div><button className="reset-crop" onClick={() => onApplyCropAll({ left: 0, right: 0, top: 0, bottom: 0 })}>重置全部裁切</button></> : <p>暂无页面</p>}
+        {pages.length ? <><div className="crop-input-grid">{(['left', 'right', 'top', 'bottom'] as const).map((side) => <label key={side}>{({ left: '左', right: '右', top: '上', bottom: '下' })[side]}<div className="number-input"><input type="number" min="0" step="0.5" value={sharedCrop[side]} onChange={(e) => onApplyCropAll({ ...sharedCrop, [side]: Math.max(0, Number(e.target.value)) })} /><span>mm</span></div></label>)}</div><button className="reset-crop" onClick={() => onApplyCropAll({ left: 0, right: 0, top: 0, bottom: 0 })}>重置全部裁切</button></> : <p>暂无页面</p>}
       </aside>
     </div>}
   </section>
+}
+
+type ProjectionStep = 'calibrate' | 'display'
+type ProjectionColorMode = 'white' | 'dark'
+type ProjectionLine = { start: { x: number; y: number }; end: { x: number; y: number } }
+
+function ProjectionFeature({ pages }: { pages: EditablePdfPage[] }) {
+  const [step, setStep] = useState<ProjectionStep>('calibrate')
+  const [widthCm, setWidthCm] = useState(24)
+  const [heightCm, setHeightCm] = useState(16)
+  const [pixelsPerCm, setPixelsPerCm] = useState(42)
+  const [draggingCalibration, setDraggingCalibration] = useState(false)
+  const [colorMode, setColorMode] = useState<ProjectionColorMode>('white')
+  const [lineWidth, setLineWidth] = useState(1)
+  const [flipX, setFlipX] = useState(false)
+  const [flipY, setFlipY] = useState(false)
+  const [rotation, setRotation] = useState(0)
+  const [magnifier, setMagnifier] = useState(false)
+  const [lineTool, setLineTool] = useState(false)
+  const [line, setLine] = useState<ProjectionLine | null>(null)
+  const [drawingLine, setDrawingLine] = useState(false)
+  const [magnifierPoint, setMagnifierPoint] = useState({ x: 0, y: 0 })
+  const projectionRef = useRef<HTMLDivElement>(null)
+  const projectionDisplayRef = useRef<HTMLDivElement>(null)
+  const calibrationRef = useRef<HTMLDivElement>(null)
+
+  const calibrationWidth = widthCm * pixelsPerCm
+  const calibrationHeight = heightCm * pixelsPerCm
+  const pageSizes = pages.map((page) => ({
+    width: Math.max(1, page.widthPt * 25.4 / 72 - page.crop.left - page.crop.right),
+    height: Math.max(1, page.heightPt * 25.4 / 72 - page.crop.top - page.crop.bottom),
+  }))
+  const pageGap = Math.max(0, pixelsPerCm * 0.2)
+  const columns = Math.max(1, Math.ceil(Math.sqrt(pages.length)))
+  const rowHeights = Array.from({ length: Math.ceil(pages.length / columns) }, (_, row) => Math.max(...pageSizes.slice(row * columns, row * columns + columns).map((size) => size.height * pixelsPerCm / 10), 1))
+  const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...pageSizes.filter((_, index) => index % columns === column).map((size) => size.width * pixelsPerCm / 10), 1))
+  const projectionWidth = columnWidths.reduce((sum, value) => sum + value, 0) + pageGap * Math.max(0, columns - 1)
+  const projectionHeight = rowHeights.reduce((sum, value) => sum + value, 0) + pageGap * Math.max(0, rowHeights.length - 1)
+
+  function updateCalibrationScale(event: React.PointerEvent<HTMLElement>) {
+    if (!calibrationRef.current) return
+    const rect = calibrationRef.current.getBoundingClientRect()
+    const next = (event.clientX - rect.left) / Math.max(1, widthCm)
+    setPixelsPerCm(Math.min(100, Math.max(4, next)))
+  }
+
+  function pointInProjection(event: React.PointerEvent<HTMLDivElement>) {
+    const rect = projectionRef.current?.getBoundingClientRect()
+    if (!rect) return { x: 0, y: 0 }
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+  }
+
+  function renderProjectionPages() {
+    const rowOffsets: number[] = []
+    rowHeights.reduce((offset, height, index) => { rowOffsets[index] = offset; return offset + height + pageGap }, 0)
+    const columnOffsets: number[] = []
+    columnWidths.reduce((offset, width, index) => { columnOffsets[index] = offset; return offset + width + pageGap }, 0)
+    return pages.map((page, index) => {
+      const row = Math.floor(index / columns)
+      const column = index % columns
+      const size = pageSizes[index]
+      return <ProjectionPage key={page.id} page={page} index={index} colorMode={colorMode} lineWidth={lineWidth} rotation={rotation} flipX={flipX} flipY={flipY} style={{ position: 'absolute', left: columnOffsets[column], top: rowOffsets[row], width: size.width * pixelsPerCm / 10, height: size.height * pixelsPerCm / 10 }} />
+    })
+  }
+
+  function finishCalibration() {
+    setStep('display')
+  }
+
+  async function toggleFullscreen() {
+    if (document.fullscreenElement) await document.exitFullscreen()
+    else await projectionDisplayRef.current?.requestFullscreen()
+  }
+
+  return <div className={`projection-feature ${step === 'display' ? 'projection-display-mode' : 'projection-calibration-mode'}`}>
+    {step === 'calibrate' ? <div className="projection-calibration">
+      <div className="projection-stepbar"><div><span className="kicker">PROJECTION · 01</span><h3>校准投影尺寸</h3><p>先输入投影区域的实际尺寸，再拖动右下角调整屏幕上的比例。校准后投屏页面不会再缩放。</p></div><button className="primary" onClick={finishCalibration}>完成校准 <Maximize2 size={15} /></button></div>
+      <div className="calibration-stage"><div className="calibration-ruler horizontal"><span>0</span><b>{widthCm.toFixed(1)} cm</b></div><div ref={calibrationRef} className="calibration-rectangle" style={{ width: calibrationWidth, height: calibrationHeight }}><div className="calibration-grid" /><span className="calibration-label width-label">{widthCm.toFixed(1)} cm</span><span className="calibration-label height-label">{heightCm.toFixed(1)} cm</span><button className="calibration-handle" aria-label="拖动调整校准尺寸" onPointerDown={(event) => { event.preventDefault(); setDraggingCalibration(true); event.currentTarget.setPointerCapture(event.pointerId) }} onPointerMove={(event) => draggingCalibration && updateCalibrationScale(event)} onPointerUp={() => setDraggingCalibration(false)} onPointerCancel={() => setDraggingCalibration(false)} /></div></div>
+      <div className="calibration-controls"><label>宽度<input type="number" min="1" step="0.1" value={widthCm} onChange={(event) => setWidthCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><label>高度<input type="number" min="1" step="0.1" value={heightCm} onChange={(event) => setHeightCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><div className="calibration-readout">当前比例 <b>{pixelsPerCm.toFixed(1)} px / cm</b><small>拖动右下角圆点微调到实际投影尺寸</small></div></div>
+    </div> : <div ref={projectionDisplayRef} className={`projection-display ${colorMode === 'dark' ? 'projection-dark' : 'projection-white'} ${magnifier ? 'has-magnifier' : ''}`}>
+      <div className="projection-toolbar"><button title="返回校准" onClick={() => setStep('calibrate')}><Ruler size={15} /></button><button title="页面/线条颜色切换" onClick={() => setColorMode((mode) => mode === 'white' ? 'dark' : 'white')}><Palette size={15} /></button><label className="line-width-control" title="线条粗细"><Split size={15} /><select value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))}>{Array.from({ length: 8 }, (_, value) => <option key={value} value={value}>{value}px</option>)}</select></label><button title="水平翻转" onClick={() => setFlipX((value) => !value)}><FlipHorizontal2 size={15} /></button><button title="垂直翻转" onClick={() => setFlipY((value) => !value)}><FlipVertical2 size={15} /></button><button title="旋转90度" onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw size={15} /></button><button className={magnifier ? 'active' : ''} title="放大镜（不改变页面实际比例）" onClick={() => setMagnifier((value) => !value)}><Search size={15} /></button><button className={lineTool ? 'active' : ''} title="线工具" onClick={() => setLineTool((value) => !value)}><Split size={15} /></button><span className="projection-status">已校准 {widthCm.toFixed(1)} × {heightCm.toFixed(1)} cm · 页面禁止缩放</span><button className="projection-exit" title="全屏/退出全屏" onClick={toggleFullscreen}><Maximize2 size={15} /></button></div>
+      <div ref={projectionRef} className={`projection-canvas ${lineTool ? 'line-tool-active' : ''}`} style={{ minWidth: projectionWidth, minHeight: projectionHeight }} onPointerDown={(event) => { if (!lineTool) return; setDrawingLine(true); const point = pointInProjection(event); setLine({ start: point, end: point }) }} onPointerMove={(event) => { const point = pointInProjection(event); setMagnifierPoint(point); if (drawingLine) setLine((current) => current ? { ...current, end: point } : current) }} onPointerUp={() => setDrawingLine(false)} onPointerLeave={() => setDrawingLine(false)}>{renderProjectionPages()}{line && <svg className="projection-line-overlay" width={projectionWidth} height={projectionHeight}><line x1={line.start.x} y1={line.start.y} x2={line.end.x} y2={line.end.y} /><text x={(line.start.x + line.end.x) / 2} y={(line.start.y + line.end.y) / 2 - 8}>{(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y) / pixelsPerCm).toFixed(1)} cm</text></svg>}{magnifier && <div className="projection-lens" style={{ left: magnifierPoint.x - 80, top: magnifierPoint.y - 80 }}><div className="projection-lens-content" style={{ width: projectionWidth, height: projectionHeight, left: 80 - magnifierPoint.x * 2, top: 80 - magnifierPoint.y * 2 }}>{renderProjectionPages()}</div></div>}</div>
+    </div>}
+  </div>
+}
+
+function ProjectionPage({ page, index, colorMode, lineWidth, rotation, flipX, flipY, style }: { page: EditablePdfPage; index: number; colorMode: ProjectionColorMode; lineWidth: number; rotation: number; flipX: boolean; flipY: boolean; style: React.CSSProperties }) {
+  const widthMm = page.widthPt * 25.4 / 72
+  const heightMm = page.heightPt * 25.4 / 72
+  const croppedWidth = Math.max(1, widthMm - page.crop.left - page.crop.right)
+  const croppedHeight = Math.max(1, heightMm - page.crop.top - page.crop.bottom)
+  const filter = colorMode === 'dark' ? `invert(1) sepia(1) saturate(${Math.max(1, lineWidth + 1)}) hue-rotate(70deg)` : lineWidth === 0 ? 'contrast(.75)' : `contrast(${1 + lineWidth * .08})`
+  return <div className={`projection-page ${colorMode === 'dark' ? 'dark-page' : ''}`} style={{ ...style, transform: `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})`, borderWidth: lineWidth === 0 ? 0 : Math.min(7, lineWidth) }}><img src={page.preview} alt={`${page.fileName} 第 ${page.pageNumber} 页`} style={{ width: `${widthMm / croppedWidth * 100}%`, height: `${heightMm / croppedHeight * 100}%`, left: `${-page.crop.left / croppedWidth * 100}%`, top: `${-page.crop.top / croppedHeight * 100}%`, filter }} /><span>{index + 1}</span></div>
 }
 
 function StitchPreview({ pages, selectedId, direction, perLine, horizontalGap, verticalGap, onSelect, onMove }: {

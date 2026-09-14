@@ -181,6 +181,49 @@ a { color: inherit; text-decoration: none; }
 .pdf-editor-controls > label { display: block; margin: 17px 0 7px; color: #6c7a72; font-size: 9px; }
 .pdf-editor-controls > label small { display: block; margin-top: 3px; color: #9aa59e; font-size: 8px; font-weight: 400; }
 .pdf-editor-controls > p { color: #8a968f; font-size: 9px; line-height: 1.55; margin: -3px 0 13px; }
+.projection-feature { min-height: 620px; background: #f5f7f3; }
+.projection-stepbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 28px 20px; border-bottom: 1px solid #dce2da; background: #fbfcf9; }
+.projection-stepbar h3 { margin: 8px 0 4px; font-size: 20px; }
+.projection-stepbar p { margin: 0; max-width: 620px; color: #7e8b83; font-size: 10px; line-height: 1.6; }
+.calibration-stage { min-height: 450px; display: flex; align-items: center; justify-content: center; position: relative; overflow: auto; padding: 50px; background: white; background-image: linear-gradient(#e6ebe5 1px, transparent 1px), linear-gradient(90deg, #e6ebe5 1px, transparent 1px); background-size: 25px 25px; }
+.calibration-rectangle { position: relative; flex: 0 0 auto; overflow: visible; border: 1px solid #18231f; background: white; box-shadow: 0 10px 28px rgba(28,48,38,.12); }
+.calibration-grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(30,40,35,.22) 1px, transparent 1px), linear-gradient(90deg, rgba(30,40,35,.22) 1px, transparent 1px), linear-gradient(rgba(30,40,35,.55) 1px, transparent 1px), linear-gradient(90deg, rgba(30,40,35,.55) 1px, transparent 1px); background-size: 10px 10px, 10px 10px, 50px 50px, 50px 50px; pointer-events: none; }
+.calibration-label { position: absolute; color: #121b17; font: 700 28px 'DM Mono'; background: rgba(255,255,255,.75); padding: 4px 8px; }
+.width-label { left: 50%; bottom: 12px; transform: translateX(-50%); }
+.height-label { top: 50%; right: 12px; transform: translateY(-50%) rotate(-90deg); transform-origin: center; }
+.calibration-handle { position: absolute; right: -10px; bottom: -10px; width: 20px; height: 20px; border: 2px solid #18231f; border-radius: 50%; background: white; cursor: nwse-resize; z-index: 2; }
+.calibration-handle:after { content: ''; position: absolute; inset: 4px; border-radius: 50%; background: var(--green); }
+.calibration-controls { display: flex; align-items: end; gap: 12px; padding: 18px 28px 24px; border-top: 1px solid #dce2da; background: #fbfcf9; }
+.calibration-controls label { display: flex; align-items: center; gap: 6px; color: #68776e; font-size: 10px; }
+.calibration-controls input { width: 76px; height: 37px; border: 1px solid #d6ded6; background: white; padding: 0 8px; outline: none; font: 600 11px 'DM Mono'; }
+.calibration-controls span { margin-left: -2px; color: #88958d; font-size: 10px; }
+.calibration-readout { display: flex; flex-direction: column; gap: 4px; margin-left: auto; color: #65746b; font-size: 10px; }
+.calibration-readout b { color: var(--green); font: 600 11px 'DM Mono'; }
+.calibration-readout small { color: #98a49c; font-size: 8px; }
+.projection-display { position: relative; min-height: 720px; background: #111; overflow: auto; }
+.projection-display:fullscreen { width: 100vw; height: 100vh; min-height: 100vh; }
+.projection-display:fullscreen .projection-canvas { min-height: calc(100vh - 45px); }
+.projection-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 5px; min-height: 45px; padding: 5px 9px; background: rgba(249,250,246,.96); border-bottom: 1px solid #dce2da; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.projection-toolbar > button, .line-width-control { width: 31px; height: 31px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #d3dcd4; background: white; color: #53665b; }
+.projection-toolbar > button:hover, .projection-toolbar > button.active { border-color: var(--green); color: var(--green); background: #edf5d9; }
+.line-width-control { gap: 2px; width: auto; padding: 0 4px; }
+.line-width-control select { width: 48px; border: 0; outline: 0; background: transparent; color: #53665b; font-size: 9px; }
+.projection-status { margin-left: auto; color: #748179; font: 9px 'DM Mono'; white-space: nowrap; }
+.projection-exit { margin-left: 4px; }
+.projection-canvas { position: relative; margin: 0 auto; background: #fff; background-image: linear-gradient(#eef1ed 1px, transparent 1px), linear-gradient(90deg, #eef1ed 1px, transparent 1px); background-size: 10px 10px; }
+.projection-page { position: absolute; overflow: hidden; border-style: solid; border-color: transparent; background: white; transform-origin: center; box-shadow: 0 2px 5px rgba(0,0,0,.18); }
+.projection-page img { position: absolute; max-width: none; object-fit: fill; }
+.projection-page > span { position: absolute; left: 7px; top: 7px; min-width: 22px; height: 22px; padding: 0 5px; display: grid; place-items: center; border-radius: 12px; background: rgba(20,92,67,.85); color: white; font: 600 9px 'DM Mono'; }
+.projection-dark { background: #111; }
+.projection-dark .projection-canvas { background: #111; background-image: linear-gradient(#252b28 1px, transparent 1px), linear-gradient(90deg, #252b28 1px, transparent 1px); }
+.projection-dark .projection-page { background: #111; box-shadow: 0 2px 5px rgba(0,0,0,.5); }
+.projection-dark .projection-page > span { background: rgba(201,243,91,.9); color: #123d2c; }
+.projection-line-overlay { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.projection-line-overlay line { stroke: #d28b42; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.projection-line-overlay text { fill: #d28b42; font: 700 16px 'DM Mono'; paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-opacity: .9; }
+.line-tool-active .projection-canvas { cursor: crosshair; }
+.projection-lens { position: absolute; z-index: 8; width: 160px; height: 160px; overflow: hidden; border: 3px solid var(--green); border-radius: 50%; background: white; box-shadow: 0 5px 18px rgba(0,0,0,.3); pointer-events: none; }
+.projection-lens-content { position: absolute; transform: scale(2); transform-origin: top left; }
 .control-divider { border-top: 1px solid #dfe4de; margin: 22px 0; }
 .stepper { height: 38px; display: grid; grid-template-columns: 38px 1fr 38px; border: 1px solid #d7ddd5; background: white; }
 .stepper button { border: 0; background: #f1f4f0; color: var(--green); font-size: 17px; }
