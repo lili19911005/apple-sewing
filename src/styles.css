@@ -188,6 +188,17 @@ a { color: inherit; text-decoration: none; }
 .calibration-stage { min-height: 450px; display: flex; align-items: center; justify-content: center; position: relative; overflow: auto; padding: 50px; background: white; background-image: linear-gradient(#e6ebe5 1px, transparent 1px), linear-gradient(90deg, #e6ebe5 1px, transparent 1px); background-size: 25px 25px; }
 .calibration-rectangle { position: relative; flex: 0 0 auto; overflow: visible; border: 1px solid #18231f; background: white; box-shadow: 0 10px 28px rgba(28,48,38,.12); }
 .calibration-grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(30,40,35,.22) 1px, transparent 1px), linear-gradient(90deg, rgba(30,40,35,.22) 1px, transparent 1px), linear-gradient(rgba(30,40,35,.55) 1px, transparent 1px), linear-gradient(90deg, rgba(30,40,35,.55) 1px, transparent 1px); background-size: 10px 10px, 10px 10px, 50px 50px, 50px 50px; pointer-events: none; }
+.calibration-quad { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; touch-action: none; }
+.calibration-quad polygon { fill: rgba(201,243,91,.12); stroke: #18231f; stroke-width: 1.5; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; }
+.calibration-quad circle { fill: white; stroke: var(--green); stroke-width: 3; cursor: move; vector-effect: non-scaling-stroke; }
+.calibration-quad circle:hover { fill: var(--lime); }
+.calibration-quad text { fill: #18231f; font: 700 22px 'DM Mono'; text-anchor: middle; paint-order: stroke; stroke: white; stroke-width: 5px; stroke-opacity: .8; }
+.calibration-corner-names { position: absolute; inset: -20px; pointer-events: none; color: #53665b; font: 500 8px 'DM Mono'; }
+.calibration-corner-names span { position: absolute; }
+.calibration-corner-names span:nth-child(1) { left: 0; top: 0; }
+.calibration-corner-names span:nth-child(2) { right: 0; top: 0; }
+.calibration-corner-names span:nth-child(3) { right: 0; bottom: 0; }
+.calibration-corner-names span:nth-child(4) { left: 0; bottom: 0; }
 .calibration-label { position: absolute; color: #121b17; font: 700 28px 'DM Mono'; background: rgba(255,255,255,.75); padding: 4px 8px; }
 .width-label { left: 50%; bottom: 12px; transform: translateX(-50%); }
 .height-label { top: 50%; right: 12px; transform: translateY(-50%) rotate(-90deg); transform-origin: center; }
@@ -210,7 +221,7 @@ a { color: inherit; text-decoration: none; }
 .line-width-control select { width: 48px; border: 0; outline: 0; background: transparent; color: #53665b; font-size: 9px; }
 .projection-status { margin-left: auto; color: #748179; font: 9px 'DM Mono'; white-space: nowrap; }
 .projection-exit { margin-left: 4px; }
-.projection-canvas { position: relative; margin: 0 auto; background: #fff; background-image: linear-gradient(#eef1ed 1px, transparent 1px), linear-gradient(90deg, #eef1ed 1px, transparent 1px); background-size: 10px 10px; }
+.projection-canvas { position: relative; margin: 0 auto; background: #fff; background-image: linear-gradient(#eef1ed 1px, transparent 1px), linear-gradient(90deg, #eef1ed 1px, transparent 1px); background-size: 10px 10px; transform-origin: 0 0; }
 .projection-page { position: absolute; overflow: hidden; border-style: solid; border-color: transparent; background: white; transform-origin: center; box-shadow: 0 2px 5px rgba(0,0,0,.18); }
 .projection-page img { position: absolute; max-width: none; object-fit: fill; }
 .projection-page > span { position: absolute; left: 7px; top: 7px; min-width: 22px; height: 22px; padding: 0 5px; display: grid; place-items: center; border-radius: 12px; background: rgba(20,92,67,.85); color: white; font: 600 9px 'DM Mono'; }
