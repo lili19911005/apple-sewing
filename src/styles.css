@@ -180,6 +180,10 @@ a { color: inherit; text-decoration: none; }
 .pdf-editor-canvas { min-width: 0; padding: 22px; background-color: #eef1ed; background-image: linear-gradient(#e0e5df 1px, transparent 1px), linear-gradient(90deg, #e0e5df 1px, transparent 1px); background-size: 28px 28px; overflow: auto; }
 .pdf-editor-controls { padding: 20px 17px; border-left: 1px solid #dce2da; background: #fbfcf9; }
 .pdf-editor-controls h4 { margin: 0 0 10px; font-size: 12px; }
+.preview-controls-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.preview-controls-heading h4 { margin: 0; }
+.add-blank-page { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 8px; border: 1px solid #cbd8c9; background: #f4f8ef; color: var(--green); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.add-blank-page:hover { border-color: var(--green); background: #edf5d9; }
 .pdf-editor-controls > label { display: block; margin: 17px 0 7px; color: #6c7a72; font-size: 9px; }
 .pdf-editor-controls > label small { display: block; margin-top: 3px; color: #9aa59e; font-size: 8px; font-weight: 400; }
 .pdf-editor-controls > p { color: #8a968f; font-size: 9px; line-height: 1.55; margin: -3px 0 13px; }

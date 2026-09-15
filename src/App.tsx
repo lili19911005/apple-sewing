@@ -19,7 +19,7 @@ type FabricRecord = { id: string; name: string; image: string; length: number; m
 type PatternRecord = { id: string; title: string; size: string; fileName: string; cover: string; pageCount: number; fileSize: number; createdAt: string }
 type PatternMigrationItem = PatternRecord & { fileData: string; fileType: string }
 type CropMargins = { left: number; right: number; top: number; bottom: number }
-type EditablePdfPage = PdfPagePreview & { crop: CropMargins }
+type EditablePdfPage = PdfPagePreview & { crop: CropMargins; isBlank?: boolean }
 
 const tools = [
   { id: 'merge' as const, number: '01', title: 'PDF 拼合和投影', description: '分页纸样拼成大图、顺序合并，或进入投影页面进行精准展示。', icon: Files, accept: '.pdf,application/pdf', multiple: true, tag: '常用' },
@@ -185,7 +185,8 @@ function App() {
   function addFiles(list: FileList | null) {
     if (!list) return
     const incoming = Array.from(list)
-    setFiles(active.multiple ? (old) => [...old, ...incoming] : incoming.slice(0, 1))
+    if (activeTool === 'merge') setFiles(incoming.slice(0, 1))
+    else setFiles(active.multiple ? (old) => [...old, ...incoming] : incoming.slice(0, 1))
     setError('')
   }
 
@@ -205,7 +206,7 @@ function App() {
         return file ? { id, file } : null
       }))).filter((item): item is { id: string; file: File } => Boolean(item))
       if (!loaded.length) throw new Error('选中的纸样 PDF 未找到，请先确认纸样库文件完整。')
-      setFiles((old) => [...old, ...loaded.map((item) => item.file)])
+      setFiles(loaded.slice(0, 1).map((item) => item.file))
       setPatternPickerOpen(false)
       setSelectedLibraryPatternIds([])
     } catch (cause) {
@@ -226,6 +227,26 @@ function App() {
       next.splice(to, 0, moved)
       return next
     })
+  }
+
+  function addBlankPdfPage() {
+    const reference = pdfPages.find((page) => page.id === selectedPdfPage) ?? pdfPages[0]
+    if (!reference) return
+    const mmToPt = 72 / 25.4
+    const blankPage: EditablePdfPage = {
+      id: `blank-${Date.now()}`,
+      fileIndex: -1,
+      pageIndex: -1,
+      fileName: '空白页面',
+      pageNumber: pdfPages.length + 1,
+      widthPt: Math.max(1, reference.widthPt - (reference.crop.left + reference.crop.right) * mmToPt),
+      heightPt: Math.max(1, reference.heightPt - (reference.crop.top + reference.crop.bottom) * mmToPt),
+      preview: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+      crop: { left: 0, right: 0, top: 0, bottom: 0 },
+      isBlank: true,
+    }
+    setPdfPages((old) => [...old, blankPage])
+    setSelectedPdfPage(blankPage.id)
   }
 
   function applyCropToAll(crop: CropMargins) {
@@ -255,7 +276,7 @@ function App() {
             perLine: mergeColumns,
             horizontalGapMm: mergeHorizontalGap,
             verticalGapMm: mergeVerticalGap,
-            pages: pdfPages.map((page) => ({ fileIndex: page.fileIndex, pageIndex: page.pageIndex, crop: page.crop })),
+            pages: pdfPages.map((page) => ({ fileIndex: page.fileIndex, pageIndex: page.pageIndex, crop: page.crop, blank: page.isBlank, widthPt: page.widthPt, heightPt: page.heightPt })),
           })
           downloadBlob(result, `裁缝宝_${mergeMode === 'sheet' ? '拼合大图' : '顺序合并'}_${Date.now()}.pdf`, 'application/pdf')
         }
@@ -433,9 +454,9 @@ function App() {
           <aside className="workspace-sidebar"><span className="kicker light">当前工具 · {active.number}</span><h2>{active.title}</h2><p>{active.description}</p><div className="steps"><div className="step active"><b>1</b><span>{activeTool === 'fabric' ? '批量导入' : '选择素材'}<small>支持拖拽或点击选择</small></span></div><div className="step active"><b>2</b><span>{activeTool === 'fabric' ? '补充资料' : '设置参数'}<small>按实际需求精细调整</small></span></div><div className={`step ${isWorking || mockupResult ? 'active' : ''}`}><b>3</b><span>{activeTool === 'fabric' ? '保存复用' : '生成下载'}<small>结果保存在你的设备</small></span></div></div><div className="privacy-note"><ShieldCheck /><span><b>本地优先</b><small>{activeTool === 'fabric' ? '布料资料保存在当前浏览器中。' : '文件不会上传到本站服务器。'}</small></span></div></aside>
           <div className="workspace-main">
             {isConverter && <>
-              <div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={(e) => { e.preventDefault(); setIsDragging(false); addFiles(e.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><input ref={inputRef} hidden type="file" accept={active.accept} multiple={active.multiple} onChange={(e) => addFiles(e.target.files)} /><span className="upload-icon"><UploadCloud /></span><h3>将文件拖放到这里</h3><p>或者 <span>点击选择文件</span></p><button className="library-file-button" type="button" onClick={openPatternPicker}><BookOpen size={14} /> 从我的纸样库选择 PDF</button><small>支持多个 PDF，可按上传顺序拼合或转为 PLT</small></div>
-              {patternPickerOpen && <div className="pattern-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPatternPickerOpen(false) }}><div className="pattern-picker-modal" role="dialog" aria-modal="true" aria-label="从纸样库选择 PDF"><div className="pattern-picker-heading"><div><span className="kicker">PATTERN LIBRARY</span><h3>选择纸样库中的 PDF</h3><p>可多选，文件会加入当前 PDF 拼合列表。</p></div><button className="modal-close" onClick={() => setPatternPickerOpen(false)}><X /></button></div>{patterns.length ? <div className="pattern-picker-list">{patterns.map((pattern) => <label className={`pattern-picker-item ${selectedLibraryPatternIds.includes(pattern.id) ? 'selected' : ''}`} key={pattern.id}><input type="checkbox" checked={selectedLibraryPatternIds.includes(pattern.id)} onChange={() => setSelectedLibraryPatternIds((old) => old.includes(pattern.id) ? old.filter((id) => id !== pattern.id) : [...old, pattern.id])} /><img src={pattern.cover} alt="" /><span><b>{pattern.title}</b><small>{pattern.size} · {pattern.fileName} · {pattern.pageCount} 页</small></span><Check size={16} /></label>)}</div> : <div className="pattern-picker-empty">纸样库中还没有 PDF，请先到“我的纸样库”导入。</div>}<div className="pattern-picker-actions"><span>已选择 {selectedLibraryPatternIds.length} 份</span><button onClick={() => setPatternPickerOpen(false)}>取消</button><button className="primary" disabled={patternPickerLoading || !selectedLibraryPatternIds.length} onClick={addSelectedLibraryPatterns}>{patternPickerLoading ? '正在读取…' : '加入拼合列表'}</button></div></div></div>}
-              {files.length > 0 && <div className="file-list"><div className="file-list-title"><span>已选择 {files.length} 个文件 · {formatBytes(totalSize)}</span><button onClick={() => setFiles([])}>全部清除</button></div>{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split('.').pop()?.toUpperCase()}</span><span className="file-name"><b>{file.name}</b><small>{formatBytes(file.size)}</small></span><button onClick={() => setFiles((all) => all.filter((_, i) => i !== index))}><X size={17} /></button></div>)}{active.multiple && <button className="add-more" onClick={() => inputRef.current?.click()}><Plus size={16} /> 继续添加文件</button>}</div>}
+              <div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={(e) => { e.preventDefault(); setIsDragging(false); addFiles(e.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><input ref={inputRef} hidden type="file" accept={active.accept} multiple={false} onChange={(e) => addFiles(e.target.files)} /><span className="upload-icon"><UploadCloud /></span><h3>选择一个 PDF 文件</h3><p>或者 <span>点击选择文件</span></p><button className="library-file-button" type="button" onClick={openPatternPicker}><BookOpen size={14} /> 从我的纸样库选择 PDF</button><small>支持单个 PDF 文件（文件内可包含多个页面）</small></div>
+              {patternPickerOpen && <div className="pattern-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPatternPickerOpen(false) }}><div className="pattern-picker-modal" role="dialog" aria-modal="true" aria-label="从纸样库选择 PDF"><div className="pattern-picker-heading"><div><span className="kicker">PATTERN LIBRARY</span><h3>选择纸样库中的 PDF</h3><p>每次选择一个文件，文件内可以包含多个页面。</p></div><button className="modal-close" onClick={() => setPatternPickerOpen(false)}><X /></button></div>{patterns.length ? <div className="pattern-picker-list">{patterns.map((pattern) => <label className={`pattern-picker-item ${selectedLibraryPatternIds.includes(pattern.id) ? 'selected' : ''}`} key={pattern.id}><input type="radio" name="pattern-library-pdf" checked={selectedLibraryPatternIds.includes(pattern.id)} onChange={() => setSelectedLibraryPatternIds([pattern.id])} /><img src={pattern.cover} alt="" /><span><b>{pattern.title}</b><small>{pattern.size} · {pattern.fileName} · {pattern.pageCount} 页</small></span><Check size={16} /></label>)}</div> : <div className="pattern-picker-empty">纸样库中还没有 PDF，请先到“我的纸样库”导入。</div>}<div className="pattern-picker-actions"><span>已选择 {selectedLibraryPatternIds.length ? '1' : '0'} 份</span><button onClick={() => setPatternPickerOpen(false)}>取消</button><button className="primary" disabled={patternPickerLoading || !selectedLibraryPatternIds.length} onClick={addSelectedLibraryPatterns}>{patternPickerLoading ? '正在读取…' : '加入拼合列表'}</button></div></div></div>}
+              {files.length > 0 && <div className="file-list"><div className="file-list-title"><span>已选择 1 个 PDF · {formatBytes(totalSize)}</span><button onClick={() => setFiles([])}>清除文件</button></div>{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split('.').pop()?.toUpperCase()}</span><span className="file-name"><b>{file.name}</b><small>{formatBytes(file.size)}</small></span><button onClick={() => setFiles((all) => all.filter((_, i) => i !== index))}><X size={17} /></button></div>)}<button className="add-more" onClick={() => inputRef.current?.click()}><Plus size={16} /> 更换 PDF 文件</button></div>}
               {activeTool === 'merge' && mergeMode === 'sheet' && files.length > 0 && <PdfStitchEditor
                 pages={pdfPages}
                 files={files}
@@ -455,6 +476,7 @@ function App() {
                 onMove={movePdfPage}
                 onApplyCropAll={applyCropToAll}
                 onDelete={deletePdfPage}
+                onAddBlankPage={addBlankPdfPage}
               />}
               <div className="settings-panel"><div className="settings-title">输出设置</div>
                 {activeTool === 'merge' && <><label>处理方式</label><div className="segment-control wrap"><button className={mergeMode === 'sheet' ? 'selected' : ''} onClick={() => setMergeMode('sheet')}><Files /> 拼合为一张大图</button><button className={mergeMode === 'sequence' ? 'selected' : ''} onClick={() => setMergeMode('sequence')}><FileImage /> 顺序合并</button><button className={mergeMode === 'plt' ? 'selected' : ''} onClick={() => setMergeMode('plt')}><FileUp /> 转 PLT</button></div>{mergeMode === 'plt' && <div className="field-row"><label>线稿精度</label><input type="range" min="1" max="4" value={quality} onChange={(e) => setQuality(Number(e.target.value))} /><span>{['', '快速', '标准', '精细', '超精细'][quality]}</span></div>}</>}
@@ -499,7 +521,7 @@ function App() {
 function PdfStitchEditor({
   pages, files, loading, tab, selectedId, direction, perLine, horizontalGap, verticalGap,
   onTab, onSelect, onDirection, onPerLine, onHorizontalGap, onVerticalGap, onMove,
-  onApplyCropAll, onDelete,
+  onApplyCropAll, onDelete, onAddBlankPage,
 }: {
   pages: EditablePdfPage[]
   files: File[]
@@ -519,6 +541,7 @@ function PdfStitchEditor({
   onMove: (from: string, to: string) => void
   onApplyCropAll: (crop: CropMargins) => void
   onDelete: (id: string) => void
+  onAddBlankPage: () => void
 }) {
   const sharedCrop = pages[0]?.crop ?? { left: 0, right: 0, top: 0, bottom: 0 }
   return <section className="pdf-stitch-editor">
@@ -532,7 +555,7 @@ function PdfStitchEditor({
         {tab === 'preview' && <StitchPreview pages={pages} selectedId={selectedId} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} onSelect={onSelect} onMove={onMove} />}
       </div>
       <aside className="pdf-editor-controls">
-        <h4>排列方式</h4><div className="segment-control compact"><button className={direction === 'horizontal' ? 'selected' : ''} onClick={() => onDirection('horizontal')}>横向排列</button><button className={direction === 'vertical' ? 'selected' : ''} onClick={() => onDirection('vertical')}>竖向排列</button></div>
+        <div className="preview-controls-heading"><h4>排列方式</h4><button className="add-blank-page" onClick={onAddBlankPage}><FileImage size={14} /> 添加空白页</button></div><div className="segment-control compact"><button className={direction === 'horizontal' ? 'selected' : ''} onClick={() => onDirection('horizontal')}>横向排列</button><button className={direction === 'vertical' ? 'selected' : ''} onClick={() => onDirection('vertical')}>竖向排列</button></div>
         <label>{direction === 'horizontal' ? '每行页数' : '每列页数'}</label><div className="stepper"><button onClick={() => onPerLine(Math.max(1, perLine - 1))}>−</button><b>{perLine}</b><button onClick={() => onPerLine(Math.min(12, perLine + 1))}>＋</button></div>
         <label>横向重叠 <small>用 ± 逐毫米校准左右接缝</small></label><div className="overlap-stepper"><button onClick={() => onHorizontalGap(Math.max(0, horizontalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={horizontalGap} onChange={(e) => onHorizontalGap(Math.max(0, Number(e.target.value)))} /><span>mm</span><button onClick={() => onHorizontalGap(horizontalGap + 1)}>＋</button></div>
         <label>纵向重叠 <small>用 ± 逐毫米校准上下接缝</small></label><div className="overlap-stepper"><button onClick={() => onVerticalGap(Math.max(0, verticalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={verticalGap} onChange={(e) => onVerticalGap(Math.max(0, Number(e.target.value)))} /><span>mm</span><button onClick={() => onVerticalGap(verticalGap + 1)}>＋</button></div>

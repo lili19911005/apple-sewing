@@ -6,6 +6,9 @@ export type StitchPage = {
   fileIndex: number
   pageIndex: number
   crop: { left: number; right: number; top: number; bottom: number }
+  blank?: boolean
+  widthPt?: number
+  heightPt?: number
 }
 
 export type StitchOptions = {
@@ -26,13 +29,17 @@ export async function mergePdfs(
   const output = await PDFDocument.create()
   if (layout === 'sheet') {
     const sources = await Promise.all(files.map(async (file) => PDFDocument.load(await file.arrayBuffer())))
-    const requestedPages = stitchOptions.pages?.length
+    const requestedPages: StitchPage[] = stitchOptions.pages?.length
       ? stitchOptions.pages
       : sources.flatMap((source, fileIndex) => source.getPageIndices().map((pageIndex) => ({
         fileIndex, pageIndex, crop: { left: 0, right: 0, top: 0, bottom: 0 },
       })))
-    const embedded = []
+    const embedded: Array<{ width: number; height: number; page?: Awaited<ReturnType<PDFDocument['embedPage']>> }> = []
     for (const item of requestedPages) {
+      if (item.blank) {
+        embedded.push({ width: Math.max(1, item.widthPt ?? 595), height: Math.max(1, item.heightPt ?? 842) })
+        continue
+      }
       const sourcePage = sources[item.fileIndex]?.getPage(item.pageIndex)
       if (!sourcePage) continue
       const crop = item.crop ?? { left: 0, right: 0, top: 0, bottom: 0 }
@@ -40,7 +47,8 @@ export async function mergePdfs(
       const bottom = Math.max(0, crop.bottom * MM_TO_PT)
       const right = Math.max(left + 1, sourcePage.getWidth() - Math.max(0, crop.right * MM_TO_PT))
       const top = Math.max(bottom + 1, sourcePage.getHeight() - Math.max(0, crop.top * MM_TO_PT))
-      embedded.push(await output.embedPage(sourcePage, { left, bottom, right, top }))
+      const page = await output.embedPage(sourcePage, { left, bottom, right, top })
+      embedded.push({ width: page.width, height: page.height, page })
     }
     if (!embedded.length) throw new Error('PDF 中没有可拼合的页面。')
     const direction = stitchOptions.direction ?? 'horizontal'
@@ -60,7 +68,8 @@ export async function mergePdfs(
     embedded.forEach((item, index) => {
       const column = direction === 'horizontal' ? index % columnCount : Math.floor(index / rowCount)
       const row = direction === 'vertical' ? index % rowCount : Math.floor(index / columnCount)
-      sheet.drawPage(item, {
+      if (!item.page) return
+      sheet.drawPage(item.page, {
         x: column * columnStep + (cellWidth - item.width) / 2,
         y: (rowCount - row - 1) * rowStep + (cellHeight - item.height) / 2,
         width: item.width,
