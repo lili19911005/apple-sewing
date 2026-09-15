@@ -692,13 +692,20 @@ function ProjectionPage({ page, sourceFile, index, colorMode, lineWidth, style }
       const source = context.getImageData(0, 0, displayWidth, displayHeight)
       const sourcePixels = source.data
       const mask = new Uint8Array(displayWidth * displayHeight)
+      const isPdfRender = Boolean(sourceFile)
       for (let pixel = 0; pixel < mask.length; pixel++) {
         const offset = pixel * 4
         const luminance = (sourcePixels[offset] * 0.299 + sourcePixels[offset + 1] * 0.587 + sourcePixels[offset + 2] * 0.114)
-        mask[pixel] = sourcePixels[offset + 3] > 0 && luminance < 218 ? 1 : 0
+        // PDF.js gives us anti-aliased gray pixels at the edge of a line. Keep
+        // those pixels in the projection mask so a seam is not broken after
+        // the page is resampled or perspective-transformed.
+        mask[pixel] = sourcePixels[offset + 3] > 0 && luminance < (isPdfRender ? 252 : 235) ? 1 : 0
       }
-      const cleanedMask = new Uint8Array(mask)
-      for (let y = 1; y < displayHeight - 1; y++) for (let x = 1; x < displayWidth - 1; x++) {
+      // The PDF path is already vector-rendered and does not need isolated
+      // pixel cleanup. That cleanup is useful only for the low-resolution
+      // image fallback, where JPEG artifacts can otherwise become noise.
+      const cleanedMask = isPdfRender ? mask : new Uint8Array(mask)
+      if (!isPdfRender) for (let y = 1; y < displayHeight - 1; y++) for (let x = 1; x < displayWidth - 1; x++) {
         const pixel = y * displayWidth + x
         if (!mask[pixel]) continue
         let neighbors = 0
@@ -727,7 +734,11 @@ function ProjectionPage({ page, sourceFile, index, colorMode, lineWidth, style }
       const output = new ImageData(displayWidth, displayHeight)
       for (let y = 0; y < displayHeight; y++) for (let x = 0; x < displayWidth; x++) {
         const offset = (y * displayWidth + x) * 4
-        const ratio = alpha[offset + 3] / 255
+        const sourceLuminance = sourcePixels[offset] * 0.299 + sourcePixels[offset + 1] * 0.587 + sourcePixels[offset + 2] * 0.114
+        const originalRatio = cleanedMask[y * displayWidth + x]
+          ? Math.min(1, Math.max(0, (255 - sourceLuminance) / (isPdfRender ? 180 : 220)))
+          : 0
+        const ratio = Math.max(originalRatio, alpha[offset + 3] / 255)
         output.data[offset] = Math.round(background[0] * (1 - ratio) + ink[0] * ratio)
         output.data[offset + 1] = Math.round(background[1] * (1 - ratio) + ink[1] * ratio)
         output.data[offset + 2] = Math.round(background[2] * (1 - ratio) + ink[2] * ratio)
