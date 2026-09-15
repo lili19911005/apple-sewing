@@ -240,16 +240,17 @@ a { color: inherit; text-decoration: none; }
 .projection-dark .projection-page { background: #111; box-shadow: 0 2px 5px rgba(0,0,0,.5); }
 .projection-dark .projection-page > span { background: rgba(201,243,91,.9); color: #123d2c; }
 .projection-line-overlay { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
-.projection-line-overlay line { stroke: #d28b42; stroke-width: 2; vector-effect: non-scaling-stroke; }
-.projection-line-overlay g.selected line { stroke: var(--green); stroke-width: 3; }
-.projection-line-overlay text { fill: #d28b42; font: 700 16px 'DM Mono'; paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-opacity: .9; }
+.projection-line-overlay line { stroke: #d41472; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.projection-line-overlay g.selected line { stroke: #7c2dbe; stroke-width: 4; }
+.projection-line-overlay text { fill: #d41472; font: 700 16px 'DM Mono'; paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-opacity: .95; }
+.projection-dark .projection-line-overlay text { stroke: #111; }
 .projection-line-toolbar { position: fixed; top: 68px; left: 50%; z-index: 99; display: flex; align-items: center; gap: 7px; min-height: 58px; padding: 5px 9px; transform: translateX(-50%); background: rgba(249,250,246,.96); border: 1px solid #dce2da; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 .projection-line-toolbar > button { width: 47px; height: 47px; display: grid; place-items: center; border: 2px solid #111; border-radius: 50%; background: white; color: #111; font-size: 29px; line-height: 1; }
 .projection-line-toolbar > button:hover, .projection-line-toolbar > button.active { background: #edf5d9; color: var(--green); border-color: var(--green); }
 .projection-line-count { width: 39px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #111; line-height: 1.05; }
 .projection-line-count b { font: 600 16px 'DM Mono'; }
 .projection-line-count small { margin-top: 4px; font-size: 10px; }
-.line-tool-active .projection-canvas { cursor: crosshair; }
+.projection-canvas.line-tool-active { cursor: crosshair; }
 .projection-lens { position: absolute; z-index: 8; width: 160px; height: 160px; overflow: hidden; border: 3px solid var(--green); border-radius: 50%; background: white; box-shadow: 0 5px 18px rgba(0,0,0,.3); pointer-events: none; }
 .projection-lens-content { position: absolute; transform: scale(2); transform-origin: top left; }
 .control-divider { border-top: 1px solid #dfe4de; margin: 22px 0; }
