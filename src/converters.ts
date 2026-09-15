@@ -15,6 +15,32 @@ export type PdfPagePreview = {
   preview: string
 }
 
+const pdfDocumentCache = new WeakMap<File, Promise<pdfjs.PDFDocumentProxy>>()
+
+async function getPdfDocument(file: File) {
+  let documentPromise = pdfDocumentCache.get(file)
+  if (!documentPromise) {
+    documentPromise = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise
+    pdfDocumentCache.set(file, documentPromise)
+  }
+  return documentPromise
+}
+
+export async function renderPdfPageCanvas(file: File, pageIndex: number, widthPx: number) {
+  const pdf = await getPdfDocument(file)
+  const page = await pdf.getPage(pageIndex + 1)
+  const baseViewport = page.getViewport({ scale: 1 })
+  const viewport = page.getViewport({ scale: Math.max(0.1, widthPx / baseViewport.width) })
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.ceil(viewport.width))
+  canvas.height = Math.max(1, Math.ceil(viewport.height))
+  const context = canvas.getContext('2d')!
+  context.fillStyle = '#fff'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  await page.render({ canvasContext: context, viewport, canvas }).promise
+  return canvas
+}
+
 export async function renderPdfPages(files: File[], scale = 0.55): Promise<PdfPagePreview[]> {
   const result: PdfPagePreview[] = []
   for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import {
   createFabricMockup, createGarmentMaskPreview, downloadBlob, mergePdfs, pdfToPlt,
-  renderPdfCover, renderPdfPages, type PdfPagePreview,
+  renderPdfCover, renderPdfPageCanvas, renderPdfPages, type PdfPagePreview,
 } from './converters'
 import { deletePatternFile, getPatternFile, savePatternFile } from './patternLibrary'
 import PatternDrafting from './PatternDrafting'
@@ -408,6 +408,7 @@ function App() {
               {files.length > 0 && <div className="file-list"><div className="file-list-title"><span>已选择 {files.length} 个文件 · {formatBytes(totalSize)}</span><button onClick={() => setFiles([])}>全部清除</button></div>{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split('.').pop()?.toUpperCase()}</span><span className="file-name"><b>{file.name}</b><small>{formatBytes(file.size)}</small></span><button onClick={() => setFiles((all) => all.filter((_, i) => i !== index))}><X size={17} /></button></div>)}{active.multiple && <button className="add-more" onClick={() => inputRef.current?.click()}><Plus size={16} /> 继续添加文件</button>}</div>}
               {activeTool === 'merge' && mergeMode === 'sheet' && files.length > 0 && <PdfStitchEditor
                 pages={pdfPages}
+                files={files}
                 loading={isLoadingPages}
                 tab={pdfEditorTab}
                 selectedId={selectedPdfPage}
@@ -466,11 +467,12 @@ function App() {
 }
 
 function PdfStitchEditor({
-  pages, loading, tab, selectedId, direction, perLine, horizontalGap, verticalGap,
+  pages, files, loading, tab, selectedId, direction, perLine, horizontalGap, verticalGap,
   onTab, onSelect, onDirection, onPerLine, onHorizontalGap, onVerticalGap, onMove,
   onApplyCropAll, onDelete,
 }: {
   pages: EditablePdfPage[]
+  files: File[]
   loading: boolean
   tab: 'preview' | 'projection'
   selectedId: string
@@ -495,7 +497,7 @@ function PdfStitchEditor({
       <button className={tab === 'projection' ? 'active' : ''} onClick={() => onTab('projection')}>投影</button>
       <span>{pages.length} 个页面 · 在预览中拖动纸样调整顺序</span>
     </div>
-    {loading ? <div className="pdf-editor-loading"><RefreshCw className="spin" /> 正在解析 PDF 页面并生成预览…</div> : tab === 'projection' ? <ProjectionFeature pages={pages} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} /> : <div className="pdf-editor-body">
+    {loading ? <div className="pdf-editor-loading"><RefreshCw className="spin" /> 正在解析 PDF 页面并生成预览…</div> : tab === 'projection' ? <ProjectionFeature pages={pages} files={files} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} /> : <div className="pdf-editor-body">
       <div className="pdf-editor-canvas">
         {tab === 'preview' && <StitchPreview pages={pages} selectedId={selectedId} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} onSelect={onSelect} onMove={onMove} />}
       </div>
@@ -548,7 +550,7 @@ function projectionMatrix(corners: CalibrationCorner[], referenceWidth: number, 
   return `matrix3d(${a},${d * referenceHeight / referenceWidth},0,${g / referenceWidth},${b * referenceWidth / referenceHeight},${e},0,${h / referenceHeight},0,0,1,0,${c * referenceWidth},${f * referenceHeight},0,1)`
 }
 
-function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalGap }: { pages: EditablePdfPage[]; direction: 'horizontal' | 'vertical'; perLine: number; horizontalGap: number; verticalGap: number }) {
+function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, verticalGap }: { pages: EditablePdfPage[]; files: File[]; direction: 'horizontal' | 'vertical'; perLine: number; horizontalGap: number; verticalGap: number }) {
   const savedCalibration = useMemo(readProjectionCalibration, [])
   const [step, setStep] = useState<ProjectionStep>('calibrate')
   const [widthCm, setWidthCm] = useState(savedCalibration.widthCm)
@@ -619,7 +621,7 @@ function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalG
   function renderProjectionPages() {
     return pages.map((page, index) => {
       const size = pageSizes[index]
-      return <ProjectionPage key={page.id} page={page} index={index} colorMode={colorMode} lineWidth={lineWidth} style={{ position: 'absolute', left: rawPositions[index].x - minX, top: rawPositions[index].y - minY, width: size.width * pageScale, height: size.height * pageScale }} />
+      return <ProjectionPage key={page.id} page={page} sourceFile={files[page.fileIndex]} index={index} colorMode={colorMode} lineWidth={lineWidth} style={{ position: 'absolute', left: rawPositions[index].x - minX, top: rawPositions[index].y - minY, width: size.width * pageScale, height: size.height * pageScale }} />
     })
   }
 
@@ -657,7 +659,7 @@ function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalG
   </div>
 }
 
-function ProjectionPage({ page, index, colorMode, lineWidth, style }: { page: EditablePdfPage; index: number; colorMode: ProjectionColorMode; lineWidth: number; style: React.CSSProperties }) {
+function ProjectionPage({ page, sourceFile, index, colorMode, lineWidth, style }: { page: EditablePdfPage; sourceFile?: File; index: number; colorMode: ProjectionColorMode; lineWidth: number; style: React.CSSProperties }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const widthMm = page.widthPt * 25.4 / 72
   const heightMm = page.heightPt * 25.4 / 72
@@ -666,13 +668,23 @@ function ProjectionPage({ page, index, colorMode, lineWidth, style }: { page: Ed
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const image = new Image()
-    image.onload = () => {
-      const displayWidth = Math.max(1, Math.round(Number(style.width) || 1))
-      const displayHeight = Math.max(1, Math.round(Number(style.height) || 1))
-      canvas.width = displayWidth
-      canvas.height = displayHeight
-      const context = canvas.getContext('2d', { willReadFrequently: true })!
+    const targetCanvas = canvas
+    let cancelled = false
+    const displayWidth = Math.max(1, Math.round(Number(style.width) || 1))
+    const displayHeight = Math.max(1, Math.round(Number(style.height) || 1))
+    async function render() {
+      const image = sourceFile
+        ? await renderPdfPageCanvas(sourceFile, page.pageIndex, Math.max(1, Math.round(displayWidth * widthMm / croppedWidth)))
+        : await new Promise<HTMLImageElement>((resolve, reject) => {
+          const fallback = new Image()
+          fallback.onload = () => resolve(fallback)
+          fallback.onerror = () => reject(new Error('PDF 预览图读取失败。'))
+          fallback.src = page.preview
+        })
+      if (cancelled) return
+      targetCanvas.width = displayWidth
+      targetCanvas.height = displayHeight
+      const context = targetCanvas.getContext('2d', { willReadFrequently: true })!
       context.clearRect(0, 0, displayWidth, displayHeight)
       const drawWidth = displayWidth * widthMm / croppedWidth
       const drawHeight = displayHeight * heightMm / croppedHeight
@@ -723,8 +735,9 @@ function ProjectionPage({ page, index, colorMode, lineWidth, style }: { page: Ed
       }
       context.putImageData(output, 0, 0)
     }
-    image.src = page.preview
-  }, [page.preview, page.crop.left, page.crop.top, widthMm, heightMm, croppedWidth, croppedHeight, colorMode, lineWidth, style.width, style.height])
+    render().catch(() => { if (!cancelled) canvas.getContext('2d')?.clearRect(0, 0, displayWidth, displayHeight) })
+    return () => { cancelled = true }
+  }, [sourceFile, page.pageIndex, page.preview, page.crop.left, page.crop.top, widthMm, heightMm, croppedWidth, croppedHeight, colorMode, lineWidth, style.width, style.height])
   return <div className={`projection-page ${colorMode === 'dark' ? 'dark-page' : ''}`} style={{ ...style, borderWidth: 0 }}><canvas ref={canvasRef} aria-label={`${page.fileName} 第 ${page.pageNumber} 页`} role="img" /><span>{index + 1}</span></div>
 }
 
