@@ -116,6 +116,8 @@ a { color: inherit; text-decoration: none; }
 .drop-zone h3 { font-size: 16px; margin: 15px 0 4px; }
 .drop-zone p { margin: 0 0 8px; font-size: 12px; color: #829087; }
 .drop-zone p span { color: var(--green); font-weight: 700; }
+.library-file-button { margin: 2px 0 9px; border: 1px solid #cbd8c9; background: #f4f8ef; color: var(--green); padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; }
+.library-file-button:hover { border-color: var(--green); background: #edf5d9; }
 .drop-zone small { color: #a3ada7; font-size: 10px; }
 .file-list { background: white; border: 1px solid #e2e6df; margin-top: 16px; padding: 15px; }
 .file-list-title { display: flex; justify-content: space-between; font-size: 11px; color: #718078; margin-bottom: 8px; }
@@ -465,6 +467,28 @@ footer > div:last-child { display: flex; gap: 22px; align-items: center; color: 
 .auth-submit { width: 100%; margin-top: 4px; }
 .auth-modal > small { display: block; text-align: center; color: #7e8a83; margin-top: 20px; }
 .auth-modal > small button { border: 0; background: none; color: var(--green); font-weight: 700; }
+.pattern-picker-backdrop { position: fixed; inset: 0; z-index: 300; display: grid; place-items: center; padding: 20px; background: rgba(14, 38, 28, .42); }
+.pattern-picker-modal { width: min(650px, 100%); max-height: min(720px, calc(100vh - 40px)); overflow: hidden; display: flex; flex-direction: column; background: #f9faf6; border: 1px solid #dce3da; box-shadow: 0 24px 70px rgba(0,0,0,.25); }
+.pattern-picker-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 22px 24px 17px; border-bottom: 1px solid #dce2da; }
+.pattern-picker-heading h3 { margin: 7px 0 4px; font-size: 19px; }
+.pattern-picker-heading p { margin: 0; color: #849087; font-size: 10px; }
+.pattern-picker-heading .modal-close { position: static; flex: 0 0 auto; }
+.pattern-picker-list { min-height: 0; overflow: auto; padding: 12px 18px; display: grid; gap: 8px; }
+.pattern-picker-item { display: flex; align-items: center; gap: 11px; min-height: 68px; padding: 8px 10px; border: 1px solid #dce3da; background: white; cursor: pointer; }
+.pattern-picker-item:hover, .pattern-picker-item.selected { border-color: var(--green); background: #f3f8e9; }
+.pattern-picker-item input { width: 16px; height: 16px; accent-color: var(--green); flex: 0 0 auto; }
+.pattern-picker-item img { width: 44px; height: 52px; object-fit: cover; background: #e8ece7; flex: 0 0 auto; }
+.pattern-picker-item > span { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.pattern-picker-item b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.pattern-picker-item small { margin-top: 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #89958e; font-size: 8px; }
+.pattern-picker-item > svg { color: var(--green); opacity: 0; flex: 0 0 auto; }
+.pattern-picker-item.selected > svg { opacity: 1; }
+.pattern-picker-empty { padding: 55px 20px; text-align: center; color: #87948c; font-size: 11px; }
+.pattern-picker-actions { display: flex; align-items: center; gap: 8px; padding: 13px 18px; border-top: 1px solid #dce2da; background: white; }
+.pattern-picker-actions span { margin-right: auto; color: #7e8b83; font-size: 9px; }
+.pattern-picker-actions button { min-height: 34px; border: 1px solid #d2dbd2; background: white; color: #52645a; padding: 0 12px; font-size: 9px; font-weight: 700; }
+.pattern-picker-actions button.primary { border-color: var(--green); background: var(--green); color: white; }
+.pattern-picker-actions button:disabled { opacity: .45; cursor: not-allowed; }
 
 @media (max-width: 980px) {
   .hero { grid-template-columns: 1fr; padding-top: 55px; }

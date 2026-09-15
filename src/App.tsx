@@ -128,6 +128,9 @@ function App() {
   const patternMigrationInputRef = useRef<HTMLInputElement>(null)
   const [coverPatternId, setCoverPatternId] = useState('')
   const [migrationNotice, setMigrationNotice] = useState('')
+  const [patternPickerOpen, setPatternPickerOpen] = useState(false)
+  const [selectedLibraryPatternIds, setSelectedLibraryPatternIds] = useState<string[]>([])
+  const [patternPickerLoading, setPatternPickerLoading] = useState(false)
   const active = tools.find((tool) => tool.id === activeTool)!
   const isConverter = activeTool === 'merge'
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files])
@@ -184,6 +187,32 @@ function App() {
     const incoming = Array.from(list)
     setFiles(active.multiple ? (old) => [...old, ...incoming] : incoming.slice(0, 1))
     setError('')
+  }
+
+  function openPatternPicker(event: React.MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation()
+    setSelectedLibraryPatternIds([])
+    setPatternPickerOpen(true)
+  }
+
+  async function addSelectedLibraryPatterns() {
+    if (!selectedLibraryPatternIds.length) return setError('请先选择纸样库中的 PDF。')
+    setPatternPickerLoading(true)
+    setError('')
+    try {
+      const loaded = (await Promise.all(selectedLibraryPatternIds.map(async (id) => {
+        const file = await getPatternFile(id)
+        return file ? { id, file } : null
+      }))).filter((item): item is { id: string; file: File } => Boolean(item))
+      if (!loaded.length) throw new Error('选中的纸样 PDF 未找到，请先确认纸样库文件完整。')
+      setFiles((old) => [...old, ...loaded.map((item) => item.file)])
+      setPatternPickerOpen(false)
+      setSelectedLibraryPatternIds([])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '纸样库 PDF 读取失败。')
+    } finally {
+      setPatternPickerLoading(false)
+    }
   }
 
   function movePdfPage(fromId: string, toId: string) {
@@ -404,7 +433,8 @@ function App() {
           <aside className="workspace-sidebar"><span className="kicker light">当前工具 · {active.number}</span><h2>{active.title}</h2><p>{active.description}</p><div className="steps"><div className="step active"><b>1</b><span>{activeTool === 'fabric' ? '批量导入' : '选择素材'}<small>支持拖拽或点击选择</small></span></div><div className="step active"><b>2</b><span>{activeTool === 'fabric' ? '补充资料' : '设置参数'}<small>按实际需求精细调整</small></span></div><div className={`step ${isWorking || mockupResult ? 'active' : ''}`}><b>3</b><span>{activeTool === 'fabric' ? '保存复用' : '生成下载'}<small>结果保存在你的设备</small></span></div></div><div className="privacy-note"><ShieldCheck /><span><b>本地优先</b><small>{activeTool === 'fabric' ? '布料资料保存在当前浏览器中。' : '文件不会上传到本站服务器。'}</small></span></div></aside>
           <div className="workspace-main">
             {isConverter && <>
-              <div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={(e) => { e.preventDefault(); setIsDragging(false); addFiles(e.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><input ref={inputRef} hidden type="file" accept={active.accept} multiple={active.multiple} onChange={(e) => addFiles(e.target.files)} /><span className="upload-icon"><UploadCloud /></span><h3>将文件拖放到这里</h3><p>或者 <span>点击选择文件</span></p><small>支持多个 PDF，可按上传顺序拼合或转为 PLT</small></div>
+              <div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={(e) => { e.preventDefault(); setIsDragging(false); addFiles(e.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><input ref={inputRef} hidden type="file" accept={active.accept} multiple={active.multiple} onChange={(e) => addFiles(e.target.files)} /><span className="upload-icon"><UploadCloud /></span><h3>将文件拖放到这里</h3><p>或者 <span>点击选择文件</span></p><button className="library-file-button" type="button" onClick={openPatternPicker}><BookOpen size={14} /> 从我的纸样库选择 PDF</button><small>支持多个 PDF，可按上传顺序拼合或转为 PLT</small></div>
+              {patternPickerOpen && <div className="pattern-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPatternPickerOpen(false) }}><div className="pattern-picker-modal" role="dialog" aria-modal="true" aria-label="从纸样库选择 PDF"><div className="pattern-picker-heading"><div><span className="kicker">PATTERN LIBRARY</span><h3>选择纸样库中的 PDF</h3><p>可多选，文件会加入当前 PDF 拼合列表。</p></div><button className="modal-close" onClick={() => setPatternPickerOpen(false)}><X /></button></div>{patterns.length ? <div className="pattern-picker-list">{patterns.map((pattern) => <label className={`pattern-picker-item ${selectedLibraryPatternIds.includes(pattern.id) ? 'selected' : ''}`} key={pattern.id}><input type="checkbox" checked={selectedLibraryPatternIds.includes(pattern.id)} onChange={() => setSelectedLibraryPatternIds((old) => old.includes(pattern.id) ? old.filter((id) => id !== pattern.id) : [...old, pattern.id])} /><img src={pattern.cover} alt="" /><span><b>{pattern.title}</b><small>{pattern.size} · {pattern.fileName} · {pattern.pageCount} 页</small></span><Check size={16} /></label>)}</div> : <div className="pattern-picker-empty">纸样库中还没有 PDF，请先到“我的纸样库”导入。</div>}<div className="pattern-picker-actions"><span>已选择 {selectedLibraryPatternIds.length} 份</span><button onClick={() => setPatternPickerOpen(false)}>取消</button><button className="primary" disabled={patternPickerLoading || !selectedLibraryPatternIds.length} onClick={addSelectedLibraryPatterns}>{patternPickerLoading ? '正在读取…' : '加入拼合列表'}</button></div></div></div>}
               {files.length > 0 && <div className="file-list"><div className="file-list-title"><span>已选择 {files.length} 个文件 · {formatBytes(totalSize)}</span><button onClick={() => setFiles([])}>全部清除</button></div>{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split('.').pop()?.toUpperCase()}</span><span className="file-name"><b>{file.name}</b><small>{formatBytes(file.size)}</small></span><button onClick={() => setFiles((all) => all.filter((_, i) => i !== index))}><X size={17} /></button></div>)}{active.multiple && <button className="add-more" onClick={() => inputRef.current?.click()}><Plus size={16} /> 继续添加文件</button>}</div>}
               {activeTool === 'merge' && mergeMode === 'sheet' && files.length > 0 && <PdfStitchEditor
                 pages={pdfPages}
