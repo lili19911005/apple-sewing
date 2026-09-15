@@ -566,6 +566,9 @@ function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalG
   const [line, setLine] = useState<ProjectionLine | null>(null)
   const [drawingLine, setDrawingLine] = useState(false)
   const [magnifierPoint, setMagnifierPoint] = useState({ x: 0, y: 0 })
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [draggingPan, setDraggingPan] = useState(false)
+  const panOrigin = useRef({ clientX: 0, clientY: 0, x: 0, y: 0 })
   const projectionRef = useRef<HTMLDivElement>(null)
   const projectionDisplayRef = useRef<HTMLDivElement>(null)
   const calibrationRef = useRef<HTMLDivElement>(null)
@@ -621,7 +624,20 @@ function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalG
   }
 
   function finishCalibration() {
+    setPan({ x: 0, y: 0 })
     setStep('display')
+  }
+
+  function startPan(event: React.PointerEvent<HTMLDivElement>) {
+    if (lineTool) return
+    panOrigin.current = { clientX: event.clientX, clientY: event.clientY, x: pan.x, y: pan.y }
+    setDraggingPan(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function updatePan(event: React.PointerEvent<HTMLDivElement>) {
+    if (!draggingPan) return
+    setPan({ x: panOrigin.current.x + event.clientX - panOrigin.current.clientX, y: panOrigin.current.y + event.clientY - panOrigin.current.clientY })
   }
 
   async function toggleFullscreen() {
@@ -636,7 +652,7 @@ function ProjectionFeature({ pages, direction, perLine, horizontalGap, verticalG
       <div className="calibration-controls"><label>宽度<input type="number" min="1" step="0.1" value={widthCm} onChange={(event) => setWidthCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><label>高度<input type="number" min="1" step="0.1" value={heightCm} onChange={(event) => setHeightCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><button className="reset-crop" onClick={() => setCorners(defaultCalibrationCorners)}>恢复矩形</button><div className="calibration-readout">当前比例 <b>{pixelsPerCm.toFixed(1)} px / cm</b><small>四角只用于比例和梯形校正，纸样可超出参考框</small></div></div>
     </div> : <div ref={projectionDisplayRef} className={`projection-display ${colorMode === 'dark' ? 'projection-dark' : 'projection-white'} ${magnifier ? 'has-magnifier' : ''}`}>
       <div className="projection-toolbar"><button title="返回校准" onClick={() => setStep('calibrate')}><Ruler size={15} /></button><button title="页面/线条颜色切换" onClick={() => setColorMode((mode) => mode === 'white' ? 'dark' : 'white')}><Palette size={15} /></button><label className="line-width-control" title="线条粗细"><Split size={15} /><select value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))}>{Array.from({ length: 8 }, (_, value) => <option key={value} value={value}>{value}px</option>)}</select></label><button title="水平翻转" onClick={() => setFlipX((value) => !value)}><FlipHorizontal2 size={15} /></button><button title="垂直翻转" onClick={() => setFlipY((value) => !value)}><FlipVertical2 size={15} /></button><button title="旋转90度" onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw size={15} /></button><button className={magnifier ? 'active' : ''} title="放大镜（不改变页面实际比例）" onClick={() => setMagnifier((value) => !value)}><Search size={15} /></button><button className={lineTool ? 'active' : ''} title="线工具" onClick={() => setLineTool((value) => !value)}><Split size={15} /></button><span className="projection-status">已校准 {widthCm.toFixed(1)} × {heightCm.toFixed(1)} cm · 页面禁止缩放</span><button className="projection-exit" title="全屏/退出全屏" onClick={toggleFullscreen}><Maximize2 size={15} /></button></div>
-      <div ref={projectionRef} className={`projection-canvas ${lineTool ? 'line-tool-active' : ''}`} style={{ minWidth: projectionWidth, minHeight: projectionHeight }} onPointerDown={(event) => { if (!lineTool) return; setDrawingLine(true); const point = pointInProjection(event); setLine({ start: point, end: point }) }} onPointerMove={(event) => { const point = pointInProjection(event); setMagnifierPoint(point); if (drawingLine) setLine((current) => current ? { ...current, end: point } : current) }} onPointerUp={() => setDrawingLine(false)} onPointerLeave={() => setDrawingLine(false)}><div className="projection-art" style={{ width: projectionWidth, height: projectionHeight, transform: projectionTransform }}><div className="projection-view-transform" style={{ width: projectionWidth, height: projectionHeight, transform: `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})` }}>{renderProjectionPages()}{line && <svg className="projection-line-overlay" width={projectionWidth} height={projectionHeight}><line x1={line.start.x} y1={line.start.y} x2={line.end.x} y2={line.end.y} /><text x={(line.start.x + line.end.x) / 2} y={(line.start.y + line.end.y) / 2 - 8}>{(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y) / pixelsPerCm).toFixed(1)} cm</text></svg>}{magnifier && <div className="projection-lens" style={{ left: magnifierPoint.x - 80, top: magnifierPoint.y - 80 }}><div className="projection-lens-content" style={{ width: projectionWidth, height: projectionHeight, left: 80 - magnifierPoint.x * 2, top: 80 - magnifierPoint.y * 2 }}>{renderProjectionPages()}</div></div>}</div></div></div>
+      <div ref={projectionRef} className={`projection-canvas ${lineTool ? 'line-tool-active' : draggingPan ? 'pan-active' : ''}`} style={{ minWidth: projectionWidth, minHeight: projectionHeight, left: pan.x, top: pan.y }} onPointerDown={(event) => { if (lineTool) { setDrawingLine(true); const point = pointInProjection(event); setLine({ start: point, end: point }) } else startPan(event) }} onPointerMove={(event) => { const point = pointInProjection(event); setMagnifierPoint(point); if (drawingLine) setLine((current) => current ? { ...current, end: point } : current); updatePan(event) }} onPointerUp={(event) => { setDrawingLine(false); if (draggingPan) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingPan(false) }} onPointerCancel={() => { setDrawingLine(false); setDraggingPan(false) }} onPointerLeave={(event) => { if (drawingLine) setDrawingLine(false); updatePan(event) }}><div className="projection-art" style={{ width: projectionWidth, height: projectionHeight, transform: projectionTransform }}><div className="projection-view-transform" style={{ width: projectionWidth, height: projectionHeight, transform: `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})` }}>{renderProjectionPages()}{line && <svg className="projection-line-overlay" width={projectionWidth} height={projectionHeight}><line x1={line.start.x} y1={line.start.y} x2={line.end.x} y2={line.end.y} /><text x={(line.start.x + line.end.x) / 2} y={(line.start.y + line.end.y) / 2 - 8}>{(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y) / pixelsPerCm).toFixed(1)} cm</text></svg>}{magnifier && <div className="projection-lens" style={{ left: magnifierPoint.x - 80, top: magnifierPoint.y - 80 }}><div className="projection-lens-content" style={{ width: projectionWidth, height: projectionHeight, left: 80 - magnifierPoint.x * 2, top: 80 - magnifierPoint.y * 2 }}>{renderProjectionPages()}</div></div>}</div></div></div>
     </div>}
   </div>
 }

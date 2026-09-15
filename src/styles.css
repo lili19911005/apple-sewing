@@ -211,17 +211,18 @@ a { color: inherit; text-decoration: none; }
 .calibration-readout { display: flex; flex-direction: column; gap: 4px; margin-left: auto; color: #65746b; font-size: 10px; }
 .calibration-readout b { color: var(--green); font: 600 11px 'DM Mono'; }
 .calibration-readout small { color: #98a49c; font-size: 8px; }
-.projection-display { position: relative; min-height: 720px; background: #fff; overflow: auto; }
+.projection-display { position: relative; min-height: 720px; padding: 58px 0 80px; background: #fff; overflow: auto; }
 .projection-display:fullscreen { width: 100vw; height: 100vh; min-height: 100vh; }
 .projection-display:fullscreen .projection-canvas { min-height: calc(100vh - 45px); }
-.projection-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 5px; min-height: 45px; padding: 5px 9px; background: rgba(249,250,246,.96); border-bottom: 1px solid #dce2da; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.projection-toolbar { position: fixed; top: 12px; left: 50%; z-index: 100; display: flex; align-items: center; gap: 5px; min-height: 45px; max-width: calc(100vw - 24px); padding: 5px 9px; transform: translateX(-50%); background: rgba(249,250,246,.96); border: 1px solid #dce2da; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 .projection-toolbar > button, .line-width-control { width: 31px; height: 31px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #d3dcd4; background: white; color: #53665b; }
 .projection-toolbar > button:hover, .projection-toolbar > button.active { border-color: var(--green); color: var(--green); background: #edf5d9; }
 .line-width-control { gap: 2px; width: auto; padding: 0 4px; }
 .line-width-control select { width: 48px; border: 0; outline: 0; background: transparent; color: #53665b; font-size: 9px; }
 .projection-status { margin-left: auto; color: #748179; font: 9px 'DM Mono'; white-space: nowrap; }
 .projection-exit { margin-left: 4px; }
-.projection-canvas { position: relative; margin: 0 auto; background: #fff; background-image: linear-gradient(#eef1ed 1px, transparent 1px), linear-gradient(90deg, #eef1ed 1px, transparent 1px); background-size: 10px 10px; transform-origin: 0 0; }
+.projection-canvas { position: relative; margin: 50px max(38vw, 260px) 80px; background: #fff; background-image: linear-gradient(#eef1ed 1px, transparent 1px), linear-gradient(90deg, #eef1ed 1px, transparent 1px); background-size: 10px 10px; transform-origin: 0 0; cursor: grab; }
+.projection-canvas.pan-active { cursor: grabbing; }
 .projection-art { position: relative; transform-origin: 0 0; }
 .projection-view-transform { position: relative; transform-origin: center center; }
 .projection-page { position: absolute; overflow: hidden; border-style: solid; border-color: transparent; background: white; transform-origin: center; box-shadow: 0 2px 5px rgba(0,0,0,.18); }
