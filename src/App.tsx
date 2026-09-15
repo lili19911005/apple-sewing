@@ -73,7 +73,8 @@ function blobToDataUrl(file: Blob) {
 }
 
 function patternInfoFromFilename(fileName: string) {
-  const base = fileName.replace(/\.pdf$/i, '').trim()
+  const originalBase = fileName.replace(/\.pdf$/i, '').trim()
+  const base = originalBase.replace(/[-_－—]\s*(?:A\d|B\d|LETTER|LEGAL|TABLOID)\s*$/i, '').trim()
   const match = base.match(/[-_－—]\s*([A-Za-z]{1,4}|\d{2,3}(?:\/[A-Za-z0-9]+)?)$/)
   return match
     ? { title: base.slice(0, match.index).trim(), size: match[1].toUpperCase() }
