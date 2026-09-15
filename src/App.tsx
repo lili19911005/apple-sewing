@@ -517,6 +517,7 @@ function PdfStitchEditor({
 type ProjectionStep = 'calibrate' | 'display'
 type ProjectionColorMode = 'white' | 'dark'
 type ProjectionLine = { start: { x: number; y: number }; end: { x: number; y: number } }
+type ProjectionFlipAxis = { index: number; x: number; y: number; angle: number }
 type CalibrationCorner = { x: number; y: number }
 
 const defaultCalibrationCorners: CalibrationCorner[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]
@@ -565,7 +566,10 @@ function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, ve
   const [rotation, setRotation] = useState(0)
   const [magnifier, setMagnifier] = useState(false)
   const [lineTool, setLineTool] = useState(false)
-  const [line, setLine] = useState<ProjectionLine | null>(null)
+  const [lines, setLines] = useState<ProjectionLine[]>([])
+  const [selectedLineIndex, setSelectedLineIndex] = useState(-1)
+  const [patternOffset, setPatternOffset] = useState({ x: 0, y: 0 })
+  const [patternFlipAxis, setPatternFlipAxis] = useState<ProjectionFlipAxis | null>(null)
   const [drawingLine, setDrawingLine] = useState(false)
   const [magnifierPoint, setMagnifierPoint] = useState({ x: 0, y: 0 })
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -642,6 +646,52 @@ function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, ve
     setPan({ x: panOrigin.current.x + event.clientX - panOrigin.current.clientX, y: panOrigin.current.y + event.clientY - panOrigin.current.clientY })
   }
 
+  function updateSelectedLine(update: (line: ProjectionLine) => ProjectionLine) {
+    if (selectedLineIndex < 0) return
+    setLines((old) => old.map((line, index) => index === selectedLineIndex ? update(line) : line))
+  }
+
+  function centerSelectedLine() {
+    const line = lines[selectedLineIndex]
+    if (!line) return
+    const lineCenter = { x: (line.start.x + line.end.x) / 2, y: (line.start.y + line.end.y) / 2 }
+    const targetCenter = { x: projectionWidth / 2, y: projectionHeight / 2 }
+    const dx = targetCenter.x - lineCenter.x
+    const dy = targetCenter.y - lineCenter.y
+    updateSelectedLine((current) => ({ start: { x: current.start.x + dx, y: current.start.y + dy }, end: { x: current.end.x + dx, y: current.end.y + dy } }))
+  }
+
+  function movePatternAlongSelectedLine() {
+    const line = lines[selectedLineIndex]
+    if (!line) return
+    const dx = line.end.x - line.start.x
+    const dy = line.end.y - line.start.y
+    const length = Math.hypot(dx, dy)
+    if (!length) return
+    setPatternOffset((current) => ({ x: current.x + dx / length * length, y: current.y + dy / length * length }))
+  }
+
+  function flipPatternAlongSelectedLine() {
+    const line = lines[selectedLineIndex]
+    if (!line) return
+    const dx = line.end.x - line.start.x
+    const dy = line.end.y - line.start.y
+    setPatternFlipAxis((current) => current?.index === selectedLineIndex
+      ? null
+      : { index: selectedLineIndex, x: (line.start.x + line.end.x) / 2, y: (line.start.y + line.end.y) / 2, angle: Math.atan2(dy, dx) * 180 / Math.PI })
+  }
+
+  function deleteSelectedLine() {
+    if (selectedLineIndex < 0) return
+    setLines((old) => old.filter((_, index) => index !== selectedLineIndex))
+    setSelectedLineIndex((old) => Math.min(old - 1, lines.length - 2))
+  }
+
+  function selectAdjacentLine(directionStep: -1 | 1) {
+    if (!lines.length) return
+    setSelectedLineIndex((old) => (old + directionStep + lines.length) % lines.length)
+  }
+
   async function toggleFullscreen() {
     if (document.fullscreenElement) await document.exitFullscreen()
     else await projectionDisplayRef.current?.requestFullscreen()
@@ -653,8 +703,9 @@ function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, ve
       <div className="calibration-stage"><div className="calibration-ruler horizontal"><span>0</span><b>{widthCm.toFixed(1)} cm</b></div><div ref={calibrationRef} className="calibration-rectangle" style={{ width: calibrationWidth, height: calibrationHeight }}><div className="calibration-grid" /><svg className="calibration-quad" viewBox={`0 0 ${calibrationWidth} ${calibrationHeight}`} onPointerMove={updateCalibrationCorner} onPointerUp={() => setDraggingCorner(null)} onPointerCancel={() => setDraggingCorner(null)}><polygon points={corners.map((corner) => `${corner.x * calibrationWidth},${corner.y * calibrationHeight}`).join(' ')} /><text x={calibrationWidth / 2} y={calibrationHeight - 14}>{widthCm.toFixed(1)} cm</text><text x={calibrationWidth - 14} y={calibrationHeight / 2} transform={`rotate(-90 ${calibrationWidth - 14} ${calibrationHeight / 2})`}>{heightCm.toFixed(1)} cm</text>{corners.map((corner, index) => <circle key={index} cx={corner.x * calibrationWidth} cy={corner.y * calibrationHeight} r={9} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setDraggingCorner(index); event.currentTarget.setPointerCapture(event.pointerId) }} />)}</svg><div className="calibration-corner-names"><span>左上</span><span>右上</span><span>右下</span><span>左下</span></div></div></div>
       <div className="calibration-controls"><label>宽度<input type="number" min="1" step="0.1" value={widthCm} onChange={(event) => setWidthCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><label>高度<input type="number" min="1" step="0.1" value={heightCm} onChange={(event) => setHeightCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><button className="reset-crop" onClick={() => setCorners(defaultCalibrationCorners)}>恢复矩形</button><div className="calibration-readout">当前比例 <b>{pixelsPerCm.toFixed(1)} px / cm</b><small>四角只用于比例和梯形校正，纸样可超出参考框</small></div></div>
     </div> : <div ref={projectionDisplayRef} className={`projection-display ${colorMode === 'dark' ? 'projection-dark' : 'projection-white'} ${magnifier ? 'has-magnifier' : ''}`}>
-      <div className="projection-toolbar"><button title="返回校准" onClick={() => setStep('calibrate')}><Ruler size={15} /></button><button title="页面/线条颜色切换" onClick={() => setColorMode((mode) => mode === 'white' ? 'dark' : 'white')}><Palette size={15} /></button><div className="projection-overlap-control" title="横向重叠"><span>横重</span><button onClick={() => onHorizontalGap(Math.max(0, horizontalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={horizontalGap} onChange={(event) => onHorizontalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onHorizontalGap(horizontalGap + 1)}>＋</button><small>mm</small></div><div className="projection-overlap-control" title="纵向重叠"><span>纵重</span><button onClick={() => onVerticalGap(Math.max(0, verticalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={verticalGap} onChange={(event) => onVerticalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onVerticalGap(verticalGap + 1)}>＋</button><small>mm</small></div><label className="line-width-control" title="线条粗细"><Split size={15} /><select value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))}>{Array.from({ length: 8 }, (_, value) => <option key={value} value={value}>{value}px</option>)}</select></label><button title="水平翻转" onClick={() => setFlipX((value) => !value)}><FlipHorizontal2 size={15} /></button><button title="垂直翻转" onClick={() => setFlipY((value) => !value)}><FlipVertical2 size={15} /></button><button title="旋转90度" onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw size={15} /></button><button className={magnifier ? 'active' : ''} title="放大镜（不改变页面实际比例）" onClick={() => setMagnifier((value) => !value)}><Search size={15} /></button><button className={lineTool ? 'active' : ''} title="线工具" onClick={() => setLineTool((value) => !value)}><Split size={15} /></button><span className="projection-status">已校准 {widthCm.toFixed(1)} × {heightCm.toFixed(1)} cm · 页面禁止缩放</span><button className="projection-exit" title="全屏/退出全屏" onClick={toggleFullscreen}><Maximize2 size={15} /></button></div>
-      <div ref={projectionRef} className={`projection-canvas ${lineTool ? 'line-tool-active' : draggingPan ? 'pan-active' : ''}`} style={{ minWidth: projectionWidth, minHeight: projectionHeight, left: pan.x, top: pan.y }} onPointerDown={(event) => { if (lineTool) { setDrawingLine(true); const point = pointInProjection(event); setLine({ start: point, end: point }) } else startPan(event) }} onPointerMove={(event) => { const point = pointInProjection(event); setMagnifierPoint(point); if (drawingLine) setLine((current) => current ? { ...current, end: point } : current); updatePan(event) }} onPointerUp={(event) => { setDrawingLine(false); if (draggingPan) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingPan(false) }} onPointerCancel={() => { setDrawingLine(false); setDraggingPan(false) }} onPointerLeave={(event) => { if (drawingLine) setDrawingLine(false); updatePan(event) }}><div className="projection-art" style={{ width: projectionWidth, height: projectionHeight, transform: projectionTransform }}><div className="projection-view-transform" style={{ width: projectionWidth, height: projectionHeight, transform: `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})` }}>{renderProjectionPages()}{line && <svg className="projection-line-overlay" width={projectionWidth} height={projectionHeight}><line x1={line.start.x} y1={line.start.y} x2={line.end.x} y2={line.end.y} /><text x={(line.start.x + line.end.x) / 2} y={(line.start.y + line.end.y) / 2 - 8}>{(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y) / pixelsPerCm).toFixed(1)} cm</text></svg>}{magnifier && <div className="projection-lens" style={{ left: magnifierPoint.x - 80, top: magnifierPoint.y - 80 }}><div className="projection-lens-content" style={{ width: projectionWidth, height: projectionHeight, left: 80 - magnifierPoint.x * 2, top: 80 - magnifierPoint.y * 2 }}>{renderProjectionPages()}</div></div>}</div></div></div>
+      <div className="projection-toolbar"><button title="返回校准" onClick={() => setStep('calibrate')}><Ruler size={15} /></button><button title="页面/线条颜色切换" onClick={() => setColorMode((mode) => mode === 'white' ? 'dark' : 'white')}><Palette size={15} /></button><div className="projection-overlap-control" title="横向重叠"><span>横重</span><button onClick={() => onHorizontalGap(Math.max(0, horizontalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={horizontalGap} onChange={(event) => onHorizontalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onHorizontalGap(horizontalGap + 1)}>＋</button><small>mm</small></div><div className="projection-overlap-control" title="纵向重叠"><span>纵重</span><button onClick={() => onVerticalGap(Math.max(0, verticalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={verticalGap} onChange={(event) => onVerticalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onVerticalGap(verticalGap + 1)}>＋</button><small>mm</small></div><label className="line-width-control" title="线条粗细"><Split size={15} /><select value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))}>{Array.from({ length: 8 }, (_, value) => <option key={value} value={value}>{value}px</option>)}</select></label><button title="水平翻转" onClick={() => setFlipX((value) => !value)}><FlipHorizontal2 size={15} /></button><button title="垂直翻转" onClick={() => setFlipY((value) => !value)}><FlipVertical2 size={15} /></button><button title="旋转90度" onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw size={15} /></button><button className={magnifier ? 'active' : ''} title="放大镜（不改变页面实际比例）" onClick={() => setMagnifier((value) => !value)}><Search size={15} /></button><button className={lineTool ? 'active' : ''} title="线工具：拖动添加方向线" onClick={() => setLineTool((value) => !value)}><Split size={15} /></button><span className="projection-status">已校准 {widthCm.toFixed(1)} × {heightCm.toFixed(1)} cm · 页面禁止缩放</span><button className="projection-exit" title="全屏/退出全屏" onClick={toggleFullscreen}><Maximize2 size={15} /></button></div>
+      {lines.length > 0 && <div className="projection-line-toolbar"><span className="projection-line-count"><b>{lines.length}</b><small>lines</small></span><button title="删除当前线条" onClick={deleteSelectedLine}><Trash2 size={18} /></button><button title="将当前线条移到中央" onClick={centerSelectedLine}>⌖</button><button title="上一个线条" onClick={() => selectAdjacentLine(-1)}>‹</button><button title="下一个线条" onClick={() => selectAdjacentLine(1)}>›</button><button className={patternFlipAxis?.index === selectedLineIndex ? 'active' : ''} title="沿当前线条翻转纸样" onClick={flipPatternAlongSelectedLine}><FlipHorizontal2 size={18} /></button><button title="沿线长度移动纸样" onClick={movePatternAlongSelectedLine}><ArrowRight size={18} /></button></div>}
+      <div ref={projectionRef} className={`projection-canvas ${lineTool ? 'line-tool-active' : draggingPan ? 'pan-active' : ''}`} style={{ minWidth: projectionWidth, minHeight: projectionHeight, left: pan.x, top: pan.y }} onPointerDown={(event) => { if (lineTool) { event.currentTarget.setPointerCapture(event.pointerId); const point = pointInProjection(event); setDrawingLine(true); setSelectedLineIndex(lines.length); setLines((old) => [...old, { start: point, end: point }]) } else startPan(event) }} onPointerMove={(event) => { const point = pointInProjection(event); setMagnifierPoint(point); if (drawingLine) setLines((old) => old.map((line, index) => index === selectedLineIndex ? { ...line, end: point } : line)); updatePan(event) }} onPointerUp={(event) => { if (drawingLine && selectedLineIndex >= 0) { const current = lines[selectedLineIndex]; if (current && Math.hypot(current.end.x - current.start.x, current.end.y - current.start.y) < 3) { setLines((old) => old.filter((_, index) => index !== selectedLineIndex)); setSelectedLineIndex((old) => Math.max(-1, old - 1)) } } setDrawingLine(false); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingPan(false) }} onPointerCancel={() => { setDrawingLine(false); setDraggingPan(false) }}><div className="projection-art" style={{ width: projectionWidth, height: projectionHeight, transform: projectionTransform }}><div className="projection-view-transform" style={{ width: projectionWidth, height: projectionHeight, transform: `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})` }}><div className="projection-pages-layer" style={{ width: projectionWidth, height: projectionHeight, transformOrigin: patternFlipAxis ? `${patternFlipAxis.x}px ${patternFlipAxis.y}px` : 'center center', transform: `${patternFlipAxis ? `rotate(${patternFlipAxis.angle}deg) scale(1, -1) rotate(${-patternFlipAxis.angle}deg)` : ''} translate(${patternOffset.x}px, ${patternOffset.y}px)` }}>{renderProjectionPages()}</div>{lines.length > 0 && <svg className="projection-line-overlay" width={projectionWidth} height={projectionHeight}>{lines.map((line, index) => <g key={index} className={index === selectedLineIndex ? 'selected' : ''}><line x1={line.start.x} y1={line.start.y} x2={line.end.x} y2={line.end.y} /><text x={(line.start.x + line.end.x) / 2} y={(line.start.y + line.end.y) / 2 - 8}>{(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y) / pixelsPerCm).toFixed(1)} cm</text></g>)}</svg>}{magnifier && <div className="projection-lens" style={{ left: magnifierPoint.x - 80, top: magnifierPoint.y - 80 }}><div className="projection-lens-content" style={{ width: projectionWidth, height: projectionHeight, left: 80 - magnifierPoint.x * 2, top: 80 - magnifierPoint.y * 2 }}>{renderProjectionPages()}</div></div>}</div></div></div>
     </div>}
   </div>
 }
