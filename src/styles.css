@@ -399,7 +399,8 @@ a { color: inherit; text-decoration: none; }
 .library-actions button { min-height: 36px; border: 1px solid #d2dbd2; background: white; color: #52645a; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }
 .library-actions button:hover { border-color: var(--green); color: var(--green); }
 .library-actions button:disabled { opacity: .5; cursor: not-allowed; }
-.library-actions button.primary { border-color: var(--green); color: white; }
+.library-actions button.primary { border-color: var(--green); background: var(--green); color: white; }
+.library-actions button.primary:hover { border-color: #0e4936; background: #0e4936; color: white; }
 .migration-help { margin: 5px 0 0; color: #87948c; font-size: 9px; }
 .success-message { margin-top: 14px; padding: 10px 12px; color: #35654f; background: #edf5d9; border: 1px solid #d5e6a7; font-size: 10px; }
 .pattern-library-card { min-width: 0; overflow: hidden; border: 1px solid #dce2da; background: white; }
