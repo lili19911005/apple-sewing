@@ -22,7 +22,7 @@ type CropMargins = { left: number; right: number; top: number; bottom: number }
 type EditablePdfPage = PdfPagePreview & { crop: CropMargins }
 
 const tools = [
-  { id: 'merge' as const, number: '01', title: 'PDF 拼合 / 转 PLT', description: '分页纸样拼成大图、顺序合并，或提取线稿生成 HPGL/PLT。', icon: Files, accept: '.pdf,application/pdf', multiple: true, tag: '常用' },
+  { id: 'merge' as const, number: '01', title: 'PDF 拼合和投影', description: '分页纸样拼成大图、顺序合并，或进入投影页面进行精准展示。', icon: Files, accept: '.pdf,application/pdf', multiple: true, tag: '常用' },
   { id: 'draft' as const, number: '02', title: '参数化服装制版', description: '输入人体净尺寸与面料类型，生成女装基础上衣前后片和一片袖。', icon: Ruler, accept: '', multiple: false, tag: '制版' },
   { id: 'mockup' as const, number: '03', title: '样式 × 布料效果图', description: '点击衣服主体并上传布料图，生成保留褶皱明暗的换布效果。', icon: Palette, accept: 'image/png,image/jpeg,image/webp', multiple: false, tag: '智能' },
   { id: 'pattern' as const, number: '04', title: '我的纸样库', description: '批量导入纸样 PDF，自动识别纸样标题、尺码并管理款式首图。', icon: BookOpen, accept: '.pdf,application/pdf', multiple: true, tag: '归档' },
