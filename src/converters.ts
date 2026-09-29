@@ -76,15 +76,18 @@ export async function renderPdfCover(file: File) {
   const source = new Uint8Array(await file.arrayBuffer())
   const pdf = await pdfjs.getDocument({ data: source }).promise
   const page = await pdf.getPage(1)
-  const viewport = page.getViewport({ scale: 0.7 })
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.ceil(viewport.width))
-  canvas.height = Math.max(1, Math.ceil(viewport.height))
-  const context = canvas.getContext('2d')!
-  context.fillStyle = '#ffffff'
-  context.fillRect(0, 0, canvas.width, canvas.height)
-  await page.render({ canvasContext: context, viewport, canvas }).promise
-  return { preview: canvas.toDataURL('image/jpeg', 0.74), pageCount: pdf.numPages }
+  async function render(scale: number, quality: number) {
+    const viewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.ceil(viewport.width))
+    canvas.height = Math.max(1, Math.ceil(viewport.height))
+    const context = canvas.getContext('2d')!
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    await page.render({ canvasContext: context, viewport, canvas }).promise
+    return canvas.toDataURL('image/jpeg', quality)
+  }
+  return { preview: await render(0.7, 0.78), fullPreview: await render(2, 0.92), pageCount: pdf.numPages }
 }
 
 export function downloadBlob(data: Uint8Array | Blob, filename: string, type: string) {

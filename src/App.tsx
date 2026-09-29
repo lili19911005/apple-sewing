@@ -11,19 +11,19 @@ import {
   renderPdfCover, renderPdfPageCanvas, renderPdfPages, type PdfPagePreview,
 } from './converters'
 import { deletePatternFile, getPatternFile, savePatternFile } from './patternLibrary'
-import PatternDrafting from './PatternDrafting'
 
-type ToolId = 'merge' | 'draft' | 'mockup' | 'pattern' | 'fabric'
+type ToolId = 'merge' | 'mockup' | 'pattern' | 'fabric'
 type UserInfo = { name: string; email: string }
 type FabricRecord = { id: string; name: string; image: string; length: number; material: string; source: string; createdAt: string }
-type PatternRecord = { id: string; title: string; size: string; fileName: string; cover: string; pageCount: number; fileSize: number; createdAt: string }
+const patternTags = ['长裙', '短裙', '长袖', '短袖', '连衣裙', '半身裙', '裤子'] as const
+type PatternTag = typeof patternTags[number]
+type PatternRecord = { id: string; title: string; size: string; fileName: string; cover: string; coverLarge?: string; pageCount: number; fileSize: number; fingerprint?: string; tag?: PatternTag | ''; createdAt: string }
 type PatternMigrationItem = PatternRecord & { fileData: string; fileType: string }
 type CropMargins = { left: number; right: number; top: number; bottom: number }
 type EditablePdfPage = PdfPagePreview & { crop: CropMargins; isBlank?: boolean }
 
 const tools = [
   { id: 'merge' as const, number: '01', title: 'PDF 拼合和投影', description: '分页纸样拼成大图、顺序合并，或进入投影页面进行精准展示。', icon: Files, accept: '.pdf,application/pdf', multiple: true, tag: '常用' },
-  { id: 'draft' as const, number: '02', title: '参数化服装制版', description: '输入人体净尺寸与面料类型，生成女装基础上衣前后片和一片袖。', icon: Ruler, accept: '', multiple: false, tag: '制版' },
   { id: 'mockup' as const, number: '03', title: '样式 × 布料效果图', description: '点击衣服主体并上传布料图，生成保留褶皱明暗的换布效果。', icon: Palette, accept: 'image/png,image/jpeg,image/webp', multiple: false, tag: '智能' },
   { id: 'pattern' as const, number: '04', title: '我的纸样库', description: '批量导入纸样 PDF，自动识别纸样标题、尺码并管理款式首图。', icon: BookOpen, accept: '.pdf,application/pdf', multiple: true, tag: '归档' },
   { id: 'fabric' as const, number: '05', title: '我的布料库', description: '批量导入布料图片，记录长度、材质、来源并随时复用。', icon: Database, accept: 'image/png,image/jpeg,image/webp', multiple: true, tag: '管理' },
@@ -81,6 +81,16 @@ function patternInfoFromFilename(fileName: string) {
     : { title: base, size: '未标注' }
 }
 
+async function fingerprintFile(file: File) {
+  const buffer = await file.arrayBuffer()
+  const digest = await crypto.subtle.digest('SHA-256', buffer)
+  return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+function normalizedStem(name: string) {
+  return name.replace(/\.[^.]+$/, '').replace(/[-_－—\s]*(?:A\d|B\d|LETTER|LEGAL|TABLOID|M|S|L|XL|XXL|\d{2,3})$/i, '').replace(/[^a-z0-9\u4e00-\u9fff]/gi, '').toLowerCase()
+}
+
 function App() {
   const [activeTool, setActiveTool] = useState<ToolId>('merge')
   const [files, setFiles] = useState<File[]>([])
@@ -126,16 +136,34 @@ function App() {
   const fabricInputRef = useRef<HTMLInputElement>(null)
   const patternInputRef = useRef<HTMLInputElement>(null)
   const patternCoverInputRef = useRef<HTMLInputElement>(null)
+  const patternCoverBatchInputRef = useRef<HTMLInputElement>(null)
   const patternMigrationInputRef = useRef<HTMLInputElement>(null)
   const [coverPatternId, setCoverPatternId] = useState('')
+  const [patternSearch, setPatternSearch] = useState('')
+  const [patternTagFilter, setPatternTagFilter] = useState<PatternTag | 'all'>('all')
+  const [previewPattern, setPreviewPattern] = useState<PatternRecord | null>(null)
   const [migrationNotice, setMigrationNotice] = useState('')
   const [patternPickerOpen, setPatternPickerOpen] = useState(false)
+  const [patternPickerSearch, setPatternPickerSearch] = useState('')
   const [selectedLibraryPatternIds, setSelectedLibraryPatternIds] = useState<string[]>([])
   const [patternPickerLoading, setPatternPickerLoading] = useState(false)
   const active = tools.find((tool) => tool.id === activeTool)!
   const isConverter = activeTool === 'merge'
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files])
   const totalFabricLength = useMemo(() => fabrics.reduce((sum, item) => sum + (Number(item.length) || 0), 0), [fabrics])
+  const filteredPatterns = useMemo(() => {
+    const query = patternSearch.trim().toLowerCase()
+    return patterns.filter((pattern) => {
+      const matchesQuery = !query || [pattern.title, pattern.fileName, pattern.size, pattern.tag || ''].some((value) => value.toLowerCase().includes(query))
+      const matchesTag = patternTagFilter === 'all' || pattern.tag === patternTagFilter
+      return matchesQuery && matchesTag
+    })
+  }, [patterns, patternSearch, patternTagFilter])
+  const filteredPickerPatterns = useMemo(() => {
+    const query = patternPickerSearch.trim().toLowerCase()
+    if (!query) return patterns
+    return patterns.filter((pattern) => [pattern.title, pattern.fileName, pattern.size, pattern.tag || ''].some((value) => value.toLowerCase().includes(query)))
+  }, [patterns, patternPickerSearch])
 
   useEffect(() => {
     try { localStorage.setItem('caifengbao-fabrics', JSON.stringify(fabrics)) }
@@ -194,6 +222,7 @@ function App() {
   function openPatternPicker(event: React.MouseEvent<HTMLButtonElement>) {
     event.stopPropagation()
     setSelectedLibraryPatternIds([])
+    setPatternPickerSearch('')
     setPatternPickerOpen(true)
   }
 
@@ -335,15 +364,27 @@ function App() {
     if (!list?.length) return
     setIsWorking(true); setError('')
     try {
+      const existingFingerprints = new Set(patterns.map((pattern) => pattern.fingerprint).filter(Boolean))
+      const existingLegacyKeys = new Set(patterns.map((pattern) => `${pattern.fileName}|${pattern.fileSize}`))
+      for (const pattern of patterns.filter((item) => !item.fingerprint)) {
+        const stored = await getPatternFile(pattern.id)
+        if (stored) existingFingerprints.add(await fingerprintFile(stored))
+      }
       const records: PatternRecord[] = []
+      let skipped = 0
       for (const file of Array.from(list)) {
+        const fingerprint = await fingerprintFile(file)
+        if (existingFingerprints.has(fingerprint) || existingLegacyKeys.has(`${file.name}|${file.size}`)) { skipped += 1; continue }
         const id = crypto.randomUUID()
         const info = patternInfoFromFilename(file.name)
         const cover = await renderPdfCover(file)
         await savePatternFile(id, file)
-        records.push({ id, title: info.title, size: info.size, fileName: file.name, cover: cover.preview, pageCount: cover.pageCount, fileSize: file.size, createdAt: new Date().toISOString() })
+        records.push({ id, title: info.title, size: info.size, fileName: file.name, cover: cover.preview, coverLarge: cover.fullPreview, pageCount: cover.pageCount, fileSize: file.size, fingerprint, tag: '', createdAt: new Date().toISOString() })
+        existingFingerprints.add(fingerprint)
+        existingLegacyKeys.add(`${file.name}|${file.size}`)
       }
       setPatterns((old) => [...records, ...old])
+      setMigrationNotice(records.length ? `已导入 ${records.length} 份 PDF${skipped ? '，自动跳过 ' + skipped + ' 份重复文件' : ''}。` : `本次 ${skipped} 份 PDF 都已存在，未重复导入。`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : '纸样导入失败。') }
     finally { setIsWorking(false) }
   }
@@ -382,7 +423,7 @@ function App() {
         const pdf = dataUrlToFile(item.fileData, item.fileName)
         const id = crypto.randomUUID()
         await savePatternFile(id, pdf)
-        imported.push({ id, title: item.title, size: item.size || '未标注', fileName: item.fileName, cover: item.cover, pageCount: item.pageCount, fileSize: pdf.size, createdAt: item.createdAt || new Date().toISOString() })
+        imported.push({ id, title: item.title, size: item.size || '未标注', fileName: item.fileName, cover: item.cover, coverLarge: item.coverLarge, pageCount: item.pageCount, fileSize: pdf.size, fingerprint: item.fingerprint, tag: item.tag || '', createdAt: item.createdAt || new Date().toISOString() })
         existingKeys.add(key)
       }
       setPatterns((old) => [...imported, ...old])
@@ -391,14 +432,7 @@ function App() {
     finally { setIsWorking(false); if (patternMigrationInputRef.current) patternMigrationInputRef.current.value = '' }
   }
 
-  async function saveGeneratedPattern(file: File, title: string, size: string) {
-    const id = crypto.randomUUID()
-    const cover = await renderPdfCover(file)
-    await savePatternFile(id, file)
-    setPatterns((old) => [{ id, title, size, fileName: file.name, cover: cover.preview, pageCount: cover.pageCount, fileSize: file.size, createdAt: new Date().toISOString() }, ...old])
-  }
-
-  function updatePattern(id: string, field: 'title' | 'size', value: string) {
+  function updatePattern(id: string, field: 'title' | 'size' | 'tag', value: string) {
     setPatterns((old) => old.map((pattern) => pattern.id === id ? { ...pattern, [field]: value } : pattern))
   }
 
@@ -419,10 +453,29 @@ function App() {
     const file = list?.[0]
     if (!file || !coverPatternId) return
     try {
-      const cover = await thumbnail(file)
-      setPatterns((old) => old.map((pattern) => pattern.id === coverPatternId ? { ...pattern, cover } : pattern))
+      const [cover, coverLarge] = await Promise.all([thumbnail(file), readDataUrl(file)])
+      setPatterns((old) => old.map((pattern) => pattern.id === coverPatternId ? { ...pattern, cover, coverLarge } : pattern))
     } catch (cause) { setError(cause instanceof Error ? cause.message : '款式首图更新失败。') }
     finally { setCoverPatternId('') }
+  }
+
+  async function importPatternCovers(list: FileList | null) {
+    if (!list?.length || !patterns.length) return
+    setIsWorking(true); setError('')
+    try {
+      const imported = await Promise.all(Array.from(list).map(async (file) => ({ file, cover: await thumbnail(file), coverLarge: await readDataUrl(file), stem: normalizedStem(file.name) })))
+      let matched = 0
+      setPatterns((old) => old.map((pattern, index) => {
+        const exact = imported.find((item) => item.stem && (item.stem === normalizedStem(pattern.title) || item.stem === normalizedStem(pattern.fileName)))
+        const fallback = imported[index]
+        const hit = exact || fallback
+        if (!hit) return pattern
+        matched += 1
+        return { ...pattern, cover: hit.cover, coverLarge: hit.coverLarge }
+      }))
+      setMigrationNotice(`已批量导入 ${matched} 张缩略图。文件名与纸样名称相同的图片会优先自动匹配，其余按顺序匹配。`)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '缩略图批量导入失败。') }
+    finally { setIsWorking(false); if (patternCoverBatchInputRef.current) patternCoverBatchInputRef.current.value = '' }
   }
 
   function handleAuth(event: React.FormEvent<HTMLFormElement>) {
@@ -451,12 +504,12 @@ function App() {
 
         <section className="tools-section" id="tools"><div className="section-heading"><div><span className="kicker">TOOLBOX</span><h2>选择你需要的工具</h2></div><p>转换、预览和资料管理集中在一个工作台。<br />所有参数都可以按实际生产需要调整。</p></div><div className="tool-cards five-tools">{tools.map((tool) => { const Icon = tool.icon; return <button key={tool.id} className={`tool-card ${activeTool === tool.id ? 'active' : ''}`} onClick={() => selectTool(tool.id)}><span className="tool-number">{tool.number}</span><span className="tool-tag">{tool.tag}</span><span className="tool-icon"><Icon /></span><h3>{tool.title}</h3><p>{tool.description}</p><span className="tool-link">打开工具 <ArrowRight size={17} /></span></button> })}</div></section>
 
-        <section className="workspace-section" id="workspace"><div className={`workspace-card ${activeTool === 'fabric' || activeTool === 'pattern' || activeTool === 'draft' ? 'wide-workspace' : ''} ${activeTool === 'merge' ? 'pdf-workspace' : ''}`}>
+        <section className="workspace-section" id="workspace"><div className={`workspace-card ${activeTool === 'fabric' || activeTool === 'pattern' ? 'wide-workspace' : ''} ${activeTool === 'merge' ? 'pdf-workspace' : ''}`}>
           <aside className="workspace-sidebar"><span className="kicker light">当前工具 · {active.number}</span><h2>{active.title}</h2><p>{active.description}</p><div className="steps"><div className="step active"><b>1</b><span>{activeTool === 'fabric' ? '批量导入' : '选择素材'}<small>支持拖拽或点击选择</small></span></div><div className="step active"><b>2</b><span>{activeTool === 'fabric' ? '补充资料' : '设置参数'}<small>按实际需求精细调整</small></span></div><div className={`step ${isWorking || mockupResult ? 'active' : ''}`}><b>3</b><span>{activeTool === 'fabric' ? '保存复用' : '生成下载'}<small>结果保存在你的设备</small></span></div></div><div className="privacy-note"><ShieldCheck /><span><b>本地优先</b><small>{activeTool === 'fabric' ? '布料资料保存在当前浏览器中。' : '文件不会上传到本站服务器。'}</small></span></div></aside>
           <div className="workspace-main">
             {isConverter && <>
               <div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={(e) => { e.preventDefault(); setIsDragging(false); addFiles(e.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><input ref={inputRef} hidden type="file" accept={active.accept} multiple={false} onChange={(e) => addFiles(e.target.files)} /><span className="upload-icon"><UploadCloud /></span><h3>选择一个 PDF 文件</h3><p>或者 <span>点击选择文件</span></p><button className="library-file-button" type="button" onClick={openPatternPicker}><BookOpen size={14} /> 从我的纸样库选择 PDF</button><small>支持单个 PDF 文件（文件内可包含多个页面）</small></div>
-              {patternPickerOpen && <div className="pattern-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPatternPickerOpen(false) }}><div className="pattern-picker-modal" role="dialog" aria-modal="true" aria-label="从纸样库选择 PDF"><div className="pattern-picker-heading"><div><span className="kicker">PATTERN LIBRARY</span><h3>选择纸样库中的 PDF</h3><p>每次选择一个文件，文件内可以包含多个页面。</p></div><button className="modal-close" onClick={() => setPatternPickerOpen(false)}><X /></button></div>{patterns.length ? <div className="pattern-picker-list">{patterns.map((pattern) => <label className={`pattern-picker-item ${selectedLibraryPatternIds.includes(pattern.id) ? 'selected' : ''}`} key={pattern.id}><input type="radio" name="pattern-library-pdf" checked={selectedLibraryPatternIds.includes(pattern.id)} onChange={() => setSelectedLibraryPatternIds([pattern.id])} /><img src={pattern.cover} alt="" /><span><b>{pattern.title}</b><small>{pattern.size} · {pattern.fileName} · {pattern.pageCount} 页</small></span><Check size={16} /></label>)}</div> : <div className="pattern-picker-empty">纸样库中还没有 PDF，请先到“我的纸样库”导入。</div>}<div className="pattern-picker-actions"><span>已选择 {selectedLibraryPatternIds.length ? '1' : '0'} 份</span><button onClick={() => setPatternPickerOpen(false)}>取消</button><button className="primary" disabled={patternPickerLoading || !selectedLibraryPatternIds.length} onClick={addSelectedLibraryPatterns}>{patternPickerLoading ? '正在读取…' : '加入拼合列表'}</button></div></div></div>}
+              {patternPickerOpen && <div className="pattern-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPatternPickerOpen(false) }}><div className="pattern-picker-modal" role="dialog" aria-modal="true" aria-label="从纸样库选择 PDF"><div className="pattern-picker-heading"><div><span className="kicker">PATTERN LIBRARY</span><h3>选择纸样库中的 PDF</h3><p>每次选择一个文件，文件内可以包含多个页面。</p></div><button className="modal-close" onClick={() => setPatternPickerOpen(false)}><X /></button></div>{patterns.length ? <><label className="pattern-picker-search"><Search size={15} /><input value={patternPickerSearch} onChange={(event) => setPatternPickerSearch(event.target.value)} placeholder="搜索名称、文件名或尺码" /><span>{filteredPickerPatterns.length} / {patterns.length}</span></label>{filteredPickerPatterns.length ? <div className="pattern-picker-list">{filteredPickerPatterns.map((pattern) => <label className={`pattern-picker-item ${selectedLibraryPatternIds.includes(pattern.id) ? 'selected' : ''}`} key={pattern.id}><input type="radio" name="pattern-library-pdf" checked={selectedLibraryPatternIds.includes(pattern.id)} onChange={() => setSelectedLibraryPatternIds([pattern.id])} /><img src={pattern.cover} alt="" /><span><b>{pattern.title}</b><small>{pattern.size} · {pattern.fileName} · {pattern.pageCount} 页</small></span><Check size={16} /></label>)}</div> : <div className="pattern-picker-empty">没有匹配的纸样记录，请更换搜索词。</div>}</> : <div className="pattern-picker-empty">纸样库中还没有 PDF，请先到“我的纸样库”导入。</div>}<div className="pattern-picker-actions"><span>已选择 {selectedLibraryPatternIds.length ? '1' : '0'} 份</span><button onClick={() => setPatternPickerOpen(false)}>取消</button><button className="primary" disabled={patternPickerLoading || !selectedLibraryPatternIds.length} onClick={addSelectedLibraryPatterns}>{patternPickerLoading ? '正在读取…' : '加入拼合列表'}</button></div></div></div>}
               {files.length > 0 && <div className="file-list"><div className="file-list-title"><span>已选择 1 个 PDF · {formatBytes(totalSize)}</span><button onClick={() => setFiles([])}>清除文件</button></div>{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split('.').pop()?.toUpperCase()}</span><span className="file-name"><b>{file.name}</b><small>{formatBytes(file.size)}</small></span><button onClick={() => setFiles((all) => all.filter((_, i) => i !== index))}><X size={17} /></button></div>)}<button className="add-more" onClick={() => inputRef.current?.click()}><Plus size={16} /> 更换 PDF 文件</button></div>}
               {activeTool === 'merge' && mergeMode === 'sheet' && files.length > 0 && <PdfStitchEditor
                 pages={pdfPages}
@@ -485,7 +538,6 @@ function App() {
               {isWorking && <Progress progress={progress} />}<button className="convert-button" disabled={isWorking || !files.length || (activeTool === 'merge' && mergeMode === 'sheet' && (isLoadingPages || !pdfPages.length))} onClick={convert}>{isWorking ? <><RefreshCw className="spin" /> 正在处理</> : <><Zap /> 开始转换并下载</>}</button>
             </>}
 
-            {activeTool === 'draft' && <PatternDrafting onSavePattern={saveGeneratedPattern} />}
 
             {activeTool === 'mockup' && <div className="mockup-workspace">
               <div className="mockup-guide"><b>1. 上传款式图</b><span>2. 点击衣服中间的大块色区</span><span>3. 确认绿色选区后生成</span></div>
@@ -498,10 +550,13 @@ function App() {
             {activeTool === 'pattern' && <div className="pattern-library">
               <input ref={patternInputRef} hidden type="file" accept=".pdf,application/pdf" multiple onChange={(event) => importPatterns(event.target.files)} />
               <input ref={patternCoverInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => replacePatternCover(event.target.files)} />
+              <input ref={patternCoverBatchInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => importPatternCovers(event.target.files)} />
               <input ref={patternMigrationInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => importPatternMigration(event.target.files)} />
-              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patterns.length} 份纸样文件</h3><p className="migration-help">先在本地地址导出迁移包，再在生产地址导入；不会覆盖已有纸样。</p></div><div className="library-actions"><button onClick={exportPatternMigration} disabled={isWorking || !patterns.length}><Download size={15} /> 导出本地数据</button><button onClick={() => patternMigrationInputRef.current?.click()} disabled={isWorking}><FileUp size={15} /> 导入迁移包</button><button className="primary" onClick={() => patternInputRef.current?.click()}><FileUp size={17} /> 批量导入 PDF</button></div></div>
+              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patterns.length} 份纸样文件</h3><p className="migration-help">自动识别名称、尺码和页数；相同 PDF 会按文件指纹自动跳过。</p></div><div className="library-actions"><button onClick={exportPatternMigration} disabled={isWorking || !patterns.length}><Download size={15} /> 导出本地数据</button><button onClick={() => patternMigrationInputRef.current?.click()} disabled={isWorking}><FileUp size={15} /> 导入迁移包</button><button onClick={() => patternCoverBatchInputRef.current?.click()} disabled={isWorking || !patterns.length}><ImagePlus size={15} /> 批量导入缩略图</button><button className="primary" onClick={() => patternInputRef.current?.click()}><FileUp size={17} /> 批量导入 PDF</button></div></div>
               {migrationNotice && <div className="success-message">{migrationNotice}</div>}
-              {patterns.length === 0 ? <button className="empty-library" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); importPatterns(event.dataTransfer.files) }} onClick={() => patternInputRef.current?.click()}><span className="upload-icon"><FileText /></span><h3>还没有纸样记录</h3><p>点击或拖入 PDF，系统会从文件名自动识别纸样名称和尺码。</p><small>示例：小红叶858上衣-M.pdf → 小红叶858上衣 · M</small></button> : <div className="pattern-grid">{patterns.map((pattern) => <article className="pattern-library-card" key={pattern.id}><div className="pattern-cover"><img src={pattern.cover} alt={pattern.title} /><button onClick={() => { setCoverPatternId(pattern.id); requestAnimationFrame(() => patternCoverInputRef.current?.click()) }}><ImagePlus size={14} /> 更换款式首图</button><span>{pattern.size}</span></div><div className="pattern-card-content"><input className="pattern-title-input" value={pattern.title} onChange={(event) => updatePattern(pattern.id, 'title', event.target.value)} aria-label="纸样标题" /><label>尺码<input value={pattern.size} onChange={(event) => updatePattern(pattern.id, 'size', event.target.value.toUpperCase())} /></label><div className="pattern-file-meta"><span><FileText size={13} /> {pattern.fileName}</span><small>{pattern.pageCount} 页 · {formatBytes(pattern.fileSize)}</small></div><div className="pattern-actions"><button onClick={() => downloadPattern(pattern)}><Download size={14} /> 下载 PDF</button><span><Save size={13} /> 自动保存</span><button className="danger" title="删除纸样" onClick={() => removePattern(pattern)}><Trash2 size={15} /></button></div></div></article>)}</div>}
+              {patterns.length > 0 && <div className="pattern-library-filters"><label className="pattern-search"><Search size={15} /><input value={patternSearch} onChange={(event) => setPatternSearch(event.target.value)} placeholder="搜索名称、文件名或尺码" /></label><div className="pattern-tags"><button className={patternTagFilter === 'all' ? 'active' : ''} onClick={() => setPatternTagFilter('all')}>全部</button>{patternTags.map((tag) => <button key={tag} className={patternTagFilter === tag ? 'active' : ''} onClick={() => setPatternTagFilter(tag)}>{tag}</button>)}</div><span className="pattern-result-count">显示 {filteredPatterns.length} / {patterns.length}</span></div>}
+              {patterns.length === 0 ? <button className="empty-library" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); importPatterns(event.dataTransfer.files) }} onClick={() => patternInputRef.current?.click()}><span className="upload-icon"><FileText /></span><h3>还没有纸样记录</h3><p>点击或拖入 PDF，系统会从文件名自动识别纸样名称、尺码和页数。</p><small>示例：小红叶858上衣-M.pdf → 小红叶858上衣 · M</small></button> : filteredPatterns.length === 0 ? <div className="pattern-filter-empty">没有匹配的纸样记录，请更换搜索词或标签。</div> : <div className="pattern-grid">{filteredPatterns.map((pattern) => <article className="pattern-library-card" key={pattern.id}><div className="pattern-cover"><button className="pattern-cover-preview" onClick={() => setPreviewPattern(pattern)}><img src={pattern.cover} alt={pattern.title} /><span>点击查看大图</span></button><button className="pattern-cover-change" onClick={() => { setCoverPatternId(pattern.id); requestAnimationFrame(() => patternCoverInputRef.current?.click()) }}><ImagePlus size={14} /> 更换缩略图</button><span>{pattern.size}</span></div><div className="pattern-card-content"><input className="pattern-title-input" value={pattern.title} onChange={(event) => updatePattern(pattern.id, 'title', event.target.value)} aria-label="纸样标题" /><label>尺码<input value={pattern.size} onChange={(event) => updatePattern(pattern.id, 'size', event.target.value.toUpperCase())} /></label><label className="pattern-tag-field">分类<select value={pattern.tag || ''} onChange={(event) => updatePattern(pattern.id, 'tag', event.target.value)}><option value="">未分类</option>{patternTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label><div className="pattern-file-meta"><span><FileText size={13} /> {pattern.fileName}</span><small>{pattern.pageCount} 页 · {formatBytes(pattern.fileSize)}</small></div><div className="pattern-actions"><button onClick={() => downloadPattern(pattern)}><Download size={14} /> 下载 PDF</button><span><Save size={13} /> 自动保存</span><button className="danger" title="删除纸样" onClick={() => removePattern(pattern)}><Trash2 size={15} /></button></div></div></article>)}</div>}
+              {previewPattern && <div className="pattern-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewPattern(null) }}><div className="pattern-preview-modal" role="dialog" aria-modal="true" aria-label="纸样缩略图大图预览"><div className="pattern-preview-heading"><div><span className="kicker">PATTERN PREVIEW</span><h3>{previewPattern.title}</h3><p>{previewPattern.size} · {previewPattern.pageCount} 页 · {previewPattern.tag || '未分类'}</p></div><button className="modal-close" onClick={() => setPreviewPattern(null)}><X /></button></div><img src={previewPattern.coverLarge || previewPattern.cover} alt={previewPattern.title} /></div></div>}
             </div>}
 
             {activeTool === 'fabric' && <div className="fabric-library"><input ref={fabricInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(e) => importFabrics(e.target.files)} /><div className="library-toolbar"><div><span className="kicker">FABRIC INVENTORY</span><h3>{fabrics.length} 款布料 · 共 {totalFabricLength.toFixed(1)} 米</h3></div><button className="primary" onClick={() => fabricInputRef.current?.click()}><PackagePlus size={17} /> 批量导入布料</button></div>{fabrics.length === 0 ? <button className="empty-library" onClick={() => fabricInputRef.current?.click()}><span className="upload-icon"><ImagePlus /></span><h3>还没有布料记录</h3><p>一次选择多张布料图片，导入后补充长度、材质和来源。</p></button> : <div className="fabric-grid">{fabrics.map((item) => <article className="fabric-card" key={item.id}><img src={item.image} alt={item.name} /><div className="fabric-fields"><input className="fabric-name" value={item.name} onChange={(e) => updateFabric(item.id, 'name', e.target.value)} aria-label="布料名称" /><div className="fabric-meta"><label>剩余长度<div className="number-input"><input type="number" min="0" step="0.1" value={item.length} onChange={(e) => updateFabric(item.id, 'length', Number(e.target.value))} /><span>米</span></div></label><label>材质<input value={item.material} placeholder="如：全棉、亚麻" onChange={(e) => updateFabric(item.id, 'material', e.target.value)} /></label><label className="full">来源<input value={item.source} placeholder="供应商 / 门店 / 链接" onChange={(e) => updateFabric(item.id, 'source', e.target.value)} /></label></div><div className="fabric-actions"><button onClick={() => useFabric(item)}><Palette size={14} /> 用于效果图</button><span><Save size={13} /> 自动保存</span><button className="danger" title="删除" onClick={() => setFabrics((old) => old.filter((fabric) => fabric.id !== item.id))}><Trash2 size={15} /></button></div></div></article>)}</div>}</div>}
@@ -556,7 +611,7 @@ function PdfStitchEditor({
         {tab === 'preview' && <StitchPreview pages={pages} selectedId={selectedId} direction={direction} perLine={perLine} horizontalGap={horizontalGap} verticalGap={verticalGap} onSelect={onSelect} onMove={onMove} />}
       </div>
       <aside className="pdf-editor-controls">
-        <div className="preview-controls-heading"><h4>排列方式</h4><button className="add-blank-page" onClick={onAddBlankPage}><FileImage size={14} /> 添加空白页</button></div><div className="segment-control compact"><button className={direction === 'horizontal' ? 'selected' : ''} onClick={() => onDirection('horizontal')}>横向排列</button><button className={direction === 'vertical' ? 'selected' : ''} onClick={() => onDirection('vertical')}>竖向排列</button></div>
+        <div className="preview-controls-heading"><h4>排列方式</h4><div className="preview-page-actions"><button className="add-blank-page" onClick={onAddBlankPage}><FileImage size={14} /> 添加空白页</button><button className="delete-current-page" disabled={!selectedId || pages.length <= 1} onClick={() => onDelete(selectedId)} title="删除当前选中的页面"><Trash2 size={14} /> 删除页面</button></div></div><div className="segment-control compact"><button className={direction === 'horizontal' ? 'selected' : ''} onClick={() => onDirection('horizontal')}>横向排列</button><button className={direction === 'vertical' ? 'selected' : ''} onClick={() => onDirection('vertical')}>竖向排列</button></div>
         <label>{direction === 'horizontal' ? '每行页数' : '每列页数'}</label><div className="stepper"><button onClick={() => onPerLine(Math.max(1, perLine - 1))}>−</button><b>{perLine}</b><button onClick={() => onPerLine(Math.min(12, perLine + 1))}>＋</button></div>
         <label>横向重叠 <small>用 ± 逐毫米校准左右接缝</small></label><div className="overlap-stepper"><button onClick={() => onHorizontalGap(Math.max(0, horizontalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={horizontalGap} onChange={(e) => onHorizontalGap(Math.max(0, Number(e.target.value)))} /><span>mm</span><button onClick={() => onHorizontalGap(horizontalGap + 1)}>＋</button></div>
         <label>纵向重叠 <small>用 ± 逐毫米校准上下接缝</small></label><div className="overlap-stepper"><button onClick={() => onVerticalGap(Math.max(0, verticalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={verticalGap} onChange={(e) => onVerticalGap(Math.max(0, Number(e.target.value)))} /><span>mm</span><button onClick={() => onVerticalGap(verticalGap + 1)}>＋</button></div>
