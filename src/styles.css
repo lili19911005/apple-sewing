@@ -516,6 +516,9 @@ footer > div:last-child { display: flex; gap: 22px; align-items: center; color: 
 .pattern-picker-search:focus-within { border-color: var(--green); box-shadow: 0 0 0 3px rgba(20,92,67,.08); }
 .pattern-picker-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #26382e; font: inherit; font-size: 10px; }
 .pattern-picker-search > span { flex: 0 0 auto; color: #89958e; font-size: 9px; }
+.pattern-import-progress { margin: 12px 0; padding: 10px 12px; border: 1px solid #dce3da; background: #f7faf4; color: #52645a; font-size: 10px; }
+.pattern-import-progress > div { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.pattern-import-progress progress { display: block; width: 100%; height: 6px; accent-color: var(--green); }
 .pattern-picker-list { min-height: 0; overflow: auto; padding: 12px 18px; display: grid; gap: 8px; }
 .pattern-picker-item { display: flex; align-items: center; gap: 11px; min-height: 68px; padding: 8px 10px; border: 1px solid #dce3da; background: white; cursor: pointer; }
 .pattern-picker-item:hover, .pattern-picker-item.selected { border-color: var(--green); background: #f3f8e9; }

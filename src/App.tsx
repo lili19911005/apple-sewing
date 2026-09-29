@@ -124,7 +124,11 @@ function App() {
     try { return JSON.parse(localStorage.getItem('caifengbao-fabrics') || '[]') } catch { return [] }
   })
   const [patterns, setPatterns] = useState<PatternRecord[]>(() => {
-    try { return JSON.parse(localStorage.getItem('caifengbao-patterns') || '[]') } catch { return [] }
+    try {
+      const saved = JSON.parse(localStorage.getItem('caifengbao-patterns') || '[]') as PatternRecord[]
+      // Older versions stored a full-resolution cover for every PDF in localStorage.
+      return saved.map(({ coverLarge: _coverLarge, ...pattern }) => pattern)
+    } catch { return [] }
   })
   const [authOpen, setAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register')
@@ -147,6 +151,7 @@ function App() {
   const [patternPickerSearch, setPatternPickerSearch] = useState('')
   const [selectedLibraryPatternIds, setSelectedLibraryPatternIds] = useState<string[]>([])
   const [patternPickerLoading, setPatternPickerLoading] = useState(false)
+  const [patternImportProgress, setPatternImportProgress] = useState<{ current: number; total: number; added: number; skipped: number } | null>(null)
   const active = tools.find((tool) => tool.id === activeTool)!
   const isConverter = activeTool === 'merge'
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files])
@@ -362,7 +367,9 @@ function App() {
 
   async function importPatterns(list: FileList | null) {
     if (!list?.length) return
+    const filesToImport = Array.from(list)
     setIsWorking(true); setError('')
+    setPatternImportProgress({ current: 0, total: filesToImport.length, added: 0, skipped: 0 })
     try {
       const existingFingerprints = new Set(patterns.map((pattern) => pattern.fingerprint).filter(Boolean))
       const existingLegacyKeys = new Set(patterns.map((pattern) => `${pattern.fileName}|${pattern.fileSize}`))
@@ -370,23 +377,48 @@ function App() {
         const stored = await getPatternFile(pattern.id)
         if (stored) existingFingerprints.add(await fingerprintFile(stored))
       }
-      const records: PatternRecord[] = []
       let skipped = 0
-      for (const file of Array.from(list)) {
+      let added = 0
+      let pendingRecords: PatternRecord[] = []
+      for (const [index, file] of filesToImport.entries()) {
+        const legacyKey = `${file.name}|${file.size}`
+        if (existingLegacyKeys.has(legacyKey)) {
+          skipped += 1
+          setPatternImportProgress({ current: index + 1, total: filesToImport.length, added, skipped })
+          continue
+        }
         const fingerprint = await fingerprintFile(file)
-        if (existingFingerprints.has(fingerprint) || existingLegacyKeys.has(`${file.name}|${file.size}`)) { skipped += 1; continue }
+        if (existingFingerprints.has(fingerprint)) {
+          skipped += 1
+          existingLegacyKeys.add(legacyKey)
+          setPatternImportProgress({ current: index + 1, total: filesToImport.length, added, skipped })
+          continue
+        }
         const id = crypto.randomUUID()
         const info = patternInfoFromFilename(file.name)
         const cover = await renderPdfCover(file)
         await savePatternFile(id, file)
-        records.push({ id, title: info.title, size: info.size, fileName: file.name, cover: cover.preview, coverLarge: cover.fullPreview, pageCount: cover.pageCount, fileSize: file.size, fingerprint, tag: '', createdAt: new Date().toISOString() })
+        pendingRecords.push({ id, title: info.title, size: info.size, fileName: file.name, cover: cover.preview, pageCount: cover.pageCount, fileSize: file.size, fingerprint, tag: '', createdAt: new Date().toISOString() })
         existingFingerprints.add(fingerprint)
-        existingLegacyKeys.add(`${file.name}|${file.size}`)
+        existingLegacyKeys.add(legacyKey)
+        added += 1
+        // Persist small batches so React and localStorage never process the whole selection at once.
+        if (pendingRecords.length >= 5) {
+          const batch = pendingRecords
+          pendingRecords = []
+          setPatterns((old) => [...batch, ...old])
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+        }
+        setPatternImportProgress({ current: index + 1, total: filesToImport.length, added, skipped })
       }
-      setPatterns((old) => [...records, ...old])
-      setMigrationNotice(records.length ? `已导入 ${records.length} 份 PDF${skipped ? '，自动跳过 ' + skipped + ' 份重复文件' : ''}。` : `本次 ${skipped} 份 PDF 都已存在，未重复导入。`)
+      if (pendingRecords.length) setPatterns((old) => [...pendingRecords, ...old])
+      setMigrationNotice(added ? `已导入 ${added} 份 PDF${skipped ? `，自动跳过 ${skipped} 份重复文件` : ''}。` : `本次 ${skipped} 份 PDF 都已存在，未重复导入。`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : '纸样导入失败。') }
-    finally { setIsWorking(false) }
+    finally {
+      setIsWorking(false)
+      window.setTimeout(() => setPatternImportProgress(null), 2500)
+      if (patternInputRef.current) patternInputRef.current.value = ''
+    }
   }
 
   async function exportPatternMigration() {
@@ -552,8 +584,9 @@ function App() {
               <input ref={patternCoverInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => replacePatternCover(event.target.files)} />
               <input ref={patternCoverBatchInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => importPatternCovers(event.target.files)} />
               <input ref={patternMigrationInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => importPatternMigration(event.target.files)} />
-              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patterns.length} 份纸样文件</h3><p className="migration-help">自动识别名称、尺码和页数；相同 PDF 会按文件指纹自动跳过。</p></div><div className="library-actions"><button onClick={exportPatternMigration} disabled={isWorking || !patterns.length}><Download size={15} /> 导出本地数据</button><button onClick={() => patternMigrationInputRef.current?.click()} disabled={isWorking}><FileUp size={15} /> 导入迁移包</button><button onClick={() => patternCoverBatchInputRef.current?.click()} disabled={isWorking || !patterns.length}><ImagePlus size={15} /> 批量导入缩略图</button><button className="primary" onClick={() => patternInputRef.current?.click()}><FileUp size={17} /> 批量导入 PDF</button></div></div>
+              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patterns.length} 份纸样文件</h3><p className="migration-help">自动识别名称、尺码和页数；相同 PDF 会按文件指纹自动跳过。</p></div><div className="library-actions"><button onClick={exportPatternMigration} disabled={isWorking || !patterns.length}><Download size={15} /> 导出本地数据</button><button onClick={() => patternMigrationInputRef.current?.click()} disabled={isWorking}><FileUp size={15} /> 导入迁移包</button><button onClick={() => patternCoverBatchInputRef.current?.click()} disabled={isWorking || !patterns.length}><ImagePlus size={15} /> 批量导入缩略图</button><button className="primary" onClick={() => patternInputRef.current?.click()} disabled={isWorking}><FileUp size={17} /> {isWorking && patternImportProgress ? '正在导入…' : '批量导入 PDF'}</button></div></div>
               {migrationNotice && <div className="success-message">{migrationNotice}</div>}
+              {patternImportProgress && <div className="pattern-import-progress"><div><span>正在处理 {patternImportProgress.current} / {patternImportProgress.total}</span><span>已导入 {patternImportProgress.added} · 重复跳过 {patternImportProgress.skipped}</span></div><progress max={patternImportProgress.total} value={patternImportProgress.current} /></div>}
               {patterns.length > 0 && <div className="pattern-library-filters"><label className="pattern-search"><Search size={15} /><input value={patternSearch} onChange={(event) => setPatternSearch(event.target.value)} placeholder="搜索名称、文件名或尺码" /></label><div className="pattern-tags"><button className={patternTagFilter === 'all' ? 'active' : ''} onClick={() => setPatternTagFilter('all')}>全部</button>{patternTags.map((tag) => <button key={tag} className={patternTagFilter === tag ? 'active' : ''} onClick={() => setPatternTagFilter(tag)}>{tag}</button>)}</div><span className="pattern-result-count">显示 {filteredPatterns.length} / {patterns.length}</span></div>}
               {patterns.length === 0 ? <button className="empty-library" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); importPatterns(event.dataTransfer.files) }} onClick={() => patternInputRef.current?.click()}><span className="upload-icon"><FileText /></span><h3>还没有纸样记录</h3><p>点击或拖入 PDF，系统会从文件名自动识别纸样名称、尺码和页数。</p><small>示例：小红叶858上衣-M.pdf → 小红叶858上衣 · M</small></button> : filteredPatterns.length === 0 ? <div className="pattern-filter-empty">没有匹配的纸样记录，请更换搜索词或标签。</div> : <div className="pattern-grid">{filteredPatterns.map((pattern) => <article className="pattern-library-card" key={pattern.id}><div className="pattern-cover"><button className="pattern-cover-preview" onClick={() => setPreviewPattern(pattern)}><img src={pattern.cover} alt={pattern.title} /><span>点击查看大图</span></button><button className="pattern-cover-change" onClick={() => { setCoverPatternId(pattern.id); requestAnimationFrame(() => patternCoverInputRef.current?.click()) }}><ImagePlus size={14} /> 更换缩略图</button><span>{pattern.size}</span></div><div className="pattern-card-content"><input className="pattern-title-input" value={pattern.title} onChange={(event) => updatePattern(pattern.id, 'title', event.target.value)} aria-label="纸样标题" /><label>尺码<input value={pattern.size} onChange={(event) => updatePattern(pattern.id, 'size', event.target.value.toUpperCase())} /></label><label className="pattern-tag-field">分类<select value={pattern.tag || ''} onChange={(event) => updatePattern(pattern.id, 'tag', event.target.value)}><option value="">未分类</option>{patternTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label><div className="pattern-file-meta"><span><FileText size={13} /> {pattern.fileName}</span><small>{pattern.pageCount} 页 · {formatBytes(pattern.fileSize)}</small></div><div className="pattern-actions"><button onClick={() => downloadPattern(pattern)}><Download size={14} /> 下载 PDF</button><span><Save size={13} /> 自动保存</span><button className="danger" title="删除纸样" onClick={() => removePattern(pattern)}><Trash2 size={15} /></button></div></div></article>)}</div>}
               {previewPattern && <div className="pattern-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewPattern(null) }}><div className="pattern-preview-modal" role="dialog" aria-modal="true" aria-label="纸样缩略图大图预览"><div className="pattern-preview-heading"><div><span className="kicker">PATTERN PREVIEW</span><h3>{previewPattern.title}</h3><p>{previewPattern.size} · {previewPattern.pageCount} 页 · {previewPattern.tag || '未分类'}</p></div><button className="modal-close" onClick={() => setPreviewPattern(null)}><X /></button></div><img src={previewPattern.coverLarge || previewPattern.cover} alt={previewPattern.title} /></div></div>}
