@@ -10,14 +10,13 @@ import {
   createFabricMockup, createGarmentMaskPreview, downloadBlob, mergePdfs, pdfToPlt,
   renderPdfCover, renderPdfPageCanvas, renderPdfPages, type PdfPagePreview,
 } from './converters'
-import { deletePatternFile, getPatternFile, savePatternFile } from './patternLibrary'
+import { deletePattern, getPatternFile, loadPatternLibrary, patchPatterns, requestPatternPersistence, savePattern } from './patternLibrary'
+import { patternTags, type PatternRecord, type PatternTag } from './patternTypes'
+import { correctMeasuredSize, defaultCalibrationCorners, isRectangle, isValidCalibration, moveCalibrationCorner, type CalibrationCorner } from './projectionCalibration'
 
 type ToolId = 'merge' | 'mockup' | 'pattern' | 'fabric'
 type UserInfo = { name: string; email: string }
 type FabricRecord = { id: string; name: string; image: string; length: number; material: string; source: string; createdAt: string }
-const patternTags = ['长裙', '短裙', '长袖', '短袖', '连衣裙', '半身裙', '裤子'] as const
-type PatternTag = typeof patternTags[number]
-type PatternRecord = { id: string; title: string; size: string; fileName: string; cover: string; coverLarge?: string; pageCount: number; fileSize: number; fingerprint?: string; tag?: PatternTag | ''; createdAt: string }
 type PatternMigrationItem = PatternRecord & { fileData: string; fileType: string }
 type CropMargins = { left: number; right: number; top: number; bottom: number }
 type EditablePdfPage = PdfPagePreview & { crop: CropMargins; isBlank?: boolean }
@@ -123,13 +122,14 @@ function App() {
   const [fabrics, setFabrics] = useState<FabricRecord[]>(() => {
     try { return JSON.parse(localStorage.getItem('caifengbao-fabrics') || '[]') } catch { return [] }
   })
-  const [patterns, setPatterns] = useState<PatternRecord[]>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('caifengbao-patterns') || '[]') as PatternRecord[]
-      // Older versions stored a full-resolution cover for every PDF in localStorage.
-      return saved.map(({ coverLarge: _coverLarge, ...pattern }) => pattern)
-    } catch { return [] }
-  })
+  const [patterns, setPatterns] = useState<PatternRecord[]>([])
+  const [patternsReady, setPatternsReady] = useState(false)
+  const [patternLoadError, setPatternLoadError] = useState('')
+  const [patternReloadKey, setPatternReloadKey] = useState(0)
+  const [pendingPatternSaves, setPendingPatternSaves] = useState(0)
+  const [patternSaveErrors, setPatternSaveErrors] = useState<string[]>([])
+  const unsavedPatternChanges = useRef(new Map<string, Partial<PatternRecord>>())
+  const [persistentStorage, setPersistentStorage] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register')
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -176,9 +176,49 @@ function App() {
   }, [fabrics])
 
   useEffect(() => {
-    try { localStorage.setItem('caifengbao-patterns', JSON.stringify(patterns)) }
-    catch { setError('纸样款式图较多，浏览器本地空间已满；请删除部分记录后再试。') }
-  }, [patterns])
+    let cancelled = false
+    setPatternsReady(false)
+    setPatternLoadError('')
+    void navigator.storage?.persisted?.().then((persisted) => { if (!cancelled) setPersistentStorage(persisted) }).catch(() => {})
+    loadPatternLibrary(async (id, file) => {
+      const info = patternInfoFromFilename(file.name)
+      let cover = { preview: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#eef2ed"/><text x="200" y="160" text-anchor="middle" font-size="30">PDF</text></svg>')}`, pageCount: 0 }
+      try { cover = await renderPdfCover(file) } catch { /* Preserve the PDF even if its preview cannot be rendered. */ }
+      return { id, ...info, fileName: file.name, cover: cover.preview, pageCount: cover.pageCount, fileSize: file.size, tag: '', createdAt: new Date(file.lastModified || Date.now()).toISOString() }
+    }).then((records) => {
+      if (!cancelled) { setPatterns(records); setPatternsReady(true) }
+    }).catch((cause) => {
+      if (!cancelled) setPatternLoadError(cause instanceof Error ? cause.message : '纸样库读取失败，请重试。')
+    })
+    return () => { cancelled = true }
+  }, [patternReloadKey])
+
+  useEffect(() => {
+    if (!pendingPatternSaves && !patternSaveErrors.length) return
+    const warnUnsaved = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warnUnsaved)
+    return () => window.removeEventListener('beforeunload', warnUnsaved)
+  }, [pendingPatternSaves, patternSaveErrors.length])
+
+  async function persistPatternChanges(updates: { id: string; changes: Partial<PatternRecord> }[]) {
+    const snapshots = updates.map(({ id, changes }) => {
+      const combined = { ...unsavedPatternChanges.current.get(id), ...changes }
+      unsavedPatternChanges.current.set(id, combined)
+      return { id, changes: combined }
+    })
+    setPendingPatternSaves((count) => count + 1)
+    try {
+      await patchPatterns(snapshots)
+      for (const { id, changes } of snapshots) {
+        if (unsavedPatternChanges.current.get(id) === changes) unsavedPatternChanges.current.delete(id)
+      }
+      setPatternSaveErrors((old) => old.filter((id) => unsavedPatternChanges.current.has(id)))
+    } catch (cause) {
+      setPatternSaveErrors((old) => [...new Set([...old, ...snapshots.map((update) => update.id)])].filter((id) => unsavedPatternChanges.current.has(id)))
+      setError(cause instanceof Error ? cause.message : '纸样修改保存失败，请重试。')
+      throw cause
+    } finally { setPendingPatternSaves((count) => count - 1) }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -366,11 +406,12 @@ function App() {
   }
 
   async function importPatterns(list: FileList | null) {
-    if (!list?.length) return
+    if (!list?.length || !patternsReady || isWorking) return
     const filesToImport = Array.from(list)
     setIsWorking(true); setError('')
     setPatternImportProgress({ current: 0, total: filesToImport.length, added: 0, skipped: 0 })
     try {
+      setPersistentStorage(await requestPatternPersistence())
       const existingFingerprints = new Set(patterns.map((pattern) => pattern.fingerprint).filter(Boolean))
       const existingLegacyKeys = new Set(patterns.map((pattern) => `${pattern.fileName}|${pattern.fileSize}`))
       for (const pattern of patterns.filter((item) => !item.fingerprint)) {
@@ -379,7 +420,6 @@ function App() {
       }
       let skipped = 0
       let added = 0
-      let pendingRecords: PatternRecord[] = []
       for (const [index, file] of filesToImport.entries()) {
         const legacyKey = `${file.name}|${file.size}`
         if (existingLegacyKeys.has(legacyKey)) {
@@ -397,21 +437,14 @@ function App() {
         const id = crypto.randomUUID()
         const info = patternInfoFromFilename(file.name)
         const cover = await renderPdfCover(file)
-        await savePatternFile(id, file)
-        pendingRecords.push({ id, title: info.title, size: info.size, fileName: file.name, cover: cover.preview, pageCount: cover.pageCount, fileSize: file.size, fingerprint, tag: '', createdAt: new Date().toISOString() })
+        const record: PatternRecord = { id, title: info.title, size: info.size, fileName: file.name, cover: cover.preview, pageCount: cover.pageCount, fileSize: file.size, fingerprint, tag: '', createdAt: new Date().toISOString() }
+        await savePattern(record, file)
+        setPatterns((old) => [record, ...old])
         existingFingerprints.add(fingerprint)
         existingLegacyKeys.add(legacyKey)
         added += 1
-        // Persist small batches so React and localStorage never process the whole selection at once.
-        if (pendingRecords.length >= 5) {
-          const batch = pendingRecords
-          pendingRecords = []
-          setPatterns((old) => [...batch, ...old])
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
-        }
         setPatternImportProgress({ current: index + 1, total: filesToImport.length, added, skipped })
       }
-      if (pendingRecords.length) setPatterns((old) => [...pendingRecords, ...old])
       setMigrationNotice(added ? `已导入 ${added} 份 PDF${skipped ? `，自动跳过 ${skipped} 份重复文件` : ''}。` : `本次 ${skipped} 份 PDF 都已存在，未重复导入。`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : '纸样导入失败。') }
     finally {
@@ -440,9 +473,10 @@ function App() {
 
   async function importPatternMigration(list: FileList | null) {
     const migrationFile = list?.[0]
-    if (!migrationFile) return
+    if (!migrationFile || !patternsReady || isWorking) return
     setIsWorking(true); setError(''); setMigrationNotice('')
     try {
+      setPersistentStorage(await requestPatternPersistence())
       const payload = JSON.parse(await migrationFile.text()) as { format?: string; version?: number; patterns?: PatternMigrationItem[] }
       if (payload.format !== 'caifengbao-pattern-migration' || payload.version !== 1 || !Array.isArray(payload.patterns)) throw new Error('这不是有效的裁缝宝纸样迁移包。')
       const existingKeys = new Set(patterns.map((pattern) => `${pattern.fileName}|${pattern.fileSize}|${pattern.title}|${pattern.size}`))
@@ -454,18 +488,21 @@ function App() {
         if (existingKeys.has(key)) { skipped += 1; continue }
         const pdf = dataUrlToFile(item.fileData, item.fileName)
         const id = crypto.randomUUID()
-        await savePatternFile(id, pdf)
-        imported.push({ id, title: item.title, size: item.size || '未标注', fileName: item.fileName, cover: item.cover, coverLarge: item.coverLarge, pageCount: item.pageCount, fileSize: pdf.size, fingerprint: item.fingerprint, tag: item.tag || '', createdAt: item.createdAt || new Date().toISOString() })
+        const record: PatternRecord = { id, title: item.title, size: item.size || '未标注', fileName: item.fileName, cover: item.cover, coverLarge: item.coverLarge, pageCount: item.pageCount, fileSize: pdf.size, fingerprint: item.fingerprint, tag: item.tag || '', createdAt: item.createdAt || new Date().toISOString() }
+        await savePattern(record, pdf)
+        imported.push(record)
+        setPatterns((old) => [record, ...old])
         existingKeys.add(key)
       }
-      setPatterns((old) => [...imported, ...old])
       setMigrationNotice(`迁移完成：导入 ${imported.length} 份${skipped ? `，跳过 ${skipped} 份重复或不完整记录` : ''}。`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : '纸样迁移包导入失败。') }
     finally { setIsWorking(false); if (patternMigrationInputRef.current) patternMigrationInputRef.current.value = '' }
   }
 
   function updatePattern(id: string, field: 'title' | 'size' | 'tag', value: string) {
-    setPatterns((old) => old.map((pattern) => pattern.id === id ? { ...pattern, [field]: value } : pattern))
+    const changes = { [field]: value } as Partial<PatternRecord>
+    setPatterns((old) => old.map((pattern) => pattern.id === id ? { ...pattern, ...changes } : pattern))
+    void persistPatternChanges([{ id, changes }]).catch(() => {})
   }
 
   async function downloadPattern(pattern: PatternRecord) {
@@ -477,8 +514,12 @@ function App() {
   }
 
   async function removePattern(pattern: PatternRecord) {
-    await deletePatternFile(pattern.id)
-    setPatterns((old) => old.filter((item) => item.id !== pattern.id))
+    try {
+      await deletePattern(pattern.id)
+      unsavedPatternChanges.current.delete(pattern.id)
+      setPatternSaveErrors((old) => old.filter((id) => id !== pattern.id))
+      setPatterns((old) => old.filter((item) => item.id !== pattern.id))
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '纸样删除失败。') }
   }
 
   async function replacePatternCover(list: FileList | null) {
@@ -486,6 +527,7 @@ function App() {
     if (!file || !coverPatternId) return
     try {
       const [cover, coverLarge] = await Promise.all([thumbnail(file), readDataUrl(file)])
+      await persistPatternChanges([{ id: coverPatternId, changes: { cover, coverLarge } }])
       setPatterns((old) => old.map((pattern) => pattern.id === coverPatternId ? { ...pattern, cover, coverLarge } : pattern))
     } catch (cause) { setError(cause instanceof Error ? cause.message : '款式首图更新失败。') }
     finally { setCoverPatternId('') }
@@ -496,16 +538,15 @@ function App() {
     setIsWorking(true); setError('')
     try {
       const imported = await Promise.all(Array.from(list).map(async (file) => ({ file, cover: await thumbnail(file), coverLarge: await readDataUrl(file), stem: normalizedStem(file.name) })))
-      let matched = 0
-      setPatterns((old) => old.map((pattern, index) => {
+      const updates: { id: string; changes: Partial<PatternRecord> }[] = []
+      for (const [index, pattern] of patterns.entries()) {
         const exact = imported.find((item) => item.stem && (item.stem === normalizedStem(pattern.title) || item.stem === normalizedStem(pattern.fileName)))
-        const fallback = imported[index]
-        const hit = exact || fallback
-        if (!hit) return pattern
-        matched += 1
-        return { ...pattern, cover: hit.cover, coverLarge: hit.coverLarge }
-      }))
-      setMigrationNotice(`已批量导入 ${matched} 张缩略图。文件名与纸样名称相同的图片会优先自动匹配，其余按顺序匹配。`)
+        const hit = exact || imported[index]
+        if (hit) updates.push({ id: pattern.id, changes: { cover: hit.cover, coverLarge: hit.coverLarge } })
+      }
+      await persistPatternChanges(updates)
+      setPatterns((old) => old.map((pattern) => ({ ...pattern, ...updates.find((update) => update.id === pattern.id)?.changes })))
+      setMigrationNotice(`已批量导入 ${updates.length} 张缩略图。文件名与纸样名称相同的图片会优先自动匹配，其余按顺序匹配。`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : '缩略图批量导入失败。') }
     finally { setIsWorking(false); if (patternCoverBatchInputRef.current) patternCoverBatchInputRef.current.value = '' }
   }
@@ -541,7 +582,7 @@ function App() {
           <div className="workspace-main">
             {isConverter && <>
               <div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={(e) => { e.preventDefault(); setIsDragging(false); addFiles(e.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><input ref={inputRef} hidden type="file" accept={active.accept} multiple={false} onChange={(e) => addFiles(e.target.files)} /><span className="upload-icon"><UploadCloud /></span><h3>选择一个 PDF 文件</h3><p>或者 <span>点击选择文件</span></p><button className="library-file-button" type="button" onClick={openPatternPicker}><BookOpen size={14} /> 从我的纸样库选择 PDF</button><small>支持单个 PDF 文件（文件内可包含多个页面）</small></div>
-              {patternPickerOpen && <div className="pattern-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPatternPickerOpen(false) }}><div className="pattern-picker-modal" role="dialog" aria-modal="true" aria-label="从纸样库选择 PDF"><div className="pattern-picker-heading"><div><span className="kicker">PATTERN LIBRARY</span><h3>选择纸样库中的 PDF</h3><p>每次选择一个文件，文件内可以包含多个页面。</p></div><button className="modal-close" onClick={() => setPatternPickerOpen(false)}><X /></button></div>{patterns.length ? <><label className="pattern-picker-search"><Search size={15} /><input value={patternPickerSearch} onChange={(event) => setPatternPickerSearch(event.target.value)} placeholder="搜索名称、文件名或尺码" /><span>{filteredPickerPatterns.length} / {patterns.length}</span></label>{filteredPickerPatterns.length ? <div className="pattern-picker-list">{filteredPickerPatterns.map((pattern) => <label className={`pattern-picker-item ${selectedLibraryPatternIds.includes(pattern.id) ? 'selected' : ''}`} key={pattern.id}><input type="radio" name="pattern-library-pdf" checked={selectedLibraryPatternIds.includes(pattern.id)} onChange={() => setSelectedLibraryPatternIds([pattern.id])} /><img src={pattern.cover} alt="" /><span><b>{pattern.title}</b><small>{pattern.size} · {pattern.fileName} · {pattern.pageCount} 页</small></span><Check size={16} /></label>)}</div> : <div className="pattern-picker-empty">没有匹配的纸样记录，请更换搜索词。</div>}</> : <div className="pattern-picker-empty">纸样库中还没有 PDF，请先到“我的纸样库”导入。</div>}<div className="pattern-picker-actions"><span>已选择 {selectedLibraryPatternIds.length ? '1' : '0'} 份</span><button onClick={() => setPatternPickerOpen(false)}>取消</button><button className="primary" disabled={patternPickerLoading || !selectedLibraryPatternIds.length} onClick={addSelectedLibraryPatterns}>{patternPickerLoading ? '正在读取…' : '加入拼合列表'}</button></div></div></div>}
+              {patternPickerOpen && <div className="pattern-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPatternPickerOpen(false) }}><div className="pattern-picker-modal" role="dialog" aria-modal="true" aria-label="从纸样库选择 PDF"><div className="pattern-picker-heading"><div><span className="kicker">PATTERN LIBRARY</span><h3>选择纸样库中的 PDF</h3><p>每次选择一个文件，文件内可以包含多个页面。</p></div><button className="modal-close" onClick={() => setPatternPickerOpen(false)}><X /></button></div>{patterns.length ? <><label className="pattern-picker-search"><Search size={15} /><input value={patternPickerSearch} onChange={(event) => setPatternPickerSearch(event.target.value)} placeholder="搜索名称、文件名或尺码" /><span>{filteredPickerPatterns.length} / {patterns.length}</span></label>{filteredPickerPatterns.length ? <div className="pattern-picker-list">{filteredPickerPatterns.map((pattern) => <label className={`pattern-picker-item ${selectedLibraryPatternIds.includes(pattern.id) ? 'selected' : ''}`} key={pattern.id}><input type="radio" name="pattern-library-pdf" checked={selectedLibraryPatternIds.includes(pattern.id)} onChange={() => setSelectedLibraryPatternIds([pattern.id])} /><img src={pattern.cover} alt="" /><span><b>{pattern.title}</b><small>{pattern.size} · {pattern.fileName} · {pattern.pageCount} 页</small></span><Check size={16} /></label>)}</div> : <div className="pattern-picker-empty">没有匹配的纸样记录，请更换搜索词。</div>}</> : <div className="pattern-picker-empty">{patternsReady ? '纸样库中还没有 PDF，请先到“我的纸样库”导入。' : patternLoadError || '正在读取本地纸样库…'}</div>}<div className="pattern-picker-actions"><span>已选择 {selectedLibraryPatternIds.length ? '1' : '0'} 份</span><button onClick={() => setPatternPickerOpen(false)}>取消</button><button className="primary" disabled={patternPickerLoading || !selectedLibraryPatternIds.length} onClick={addSelectedLibraryPatterns}>{patternPickerLoading ? '正在读取…' : '加入拼合列表'}</button></div></div></div>}
               {files.length > 0 && <div className="file-list"><div className="file-list-title"><span>已选择 1 个 PDF · {formatBytes(totalSize)}</span><button onClick={() => setFiles([])}>清除文件</button></div>{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split('.').pop()?.toUpperCase()}</span><span className="file-name"><b>{file.name}</b><small>{formatBytes(file.size)}</small></span><button onClick={() => setFiles((all) => all.filter((_, i) => i !== index))}><X size={17} /></button></div>)}<button className="add-more" onClick={() => inputRef.current?.click()}><Plus size={16} /> 更换 PDF 文件</button></div>}
               {activeTool === 'merge' && mergeMode === 'sheet' && files.length > 0 && <PdfStitchEditor
                 pages={pdfPages}
@@ -584,11 +625,13 @@ function App() {
               <input ref={patternCoverInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => replacePatternCover(event.target.files)} />
               <input ref={patternCoverBatchInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => importPatternCovers(event.target.files)} />
               <input ref={patternMigrationInputRef} hidden type="file" accept=".json,application/json" onChange={(event) => importPatternMigration(event.target.files)} />
-              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patterns.length} 份纸样文件</h3><p className="migration-help">自动识别名称、尺码和页数；相同 PDF 会按文件指纹自动跳过。</p></div><div className="library-actions"><button onClick={exportPatternMigration} disabled={isWorking || !patterns.length}><Download size={15} /> 导出本地数据</button><button onClick={() => patternMigrationInputRef.current?.click()} disabled={isWorking}><FileUp size={15} /> 导入迁移包</button><button onClick={() => patternCoverBatchInputRef.current?.click()} disabled={isWorking || !patterns.length}><ImagePlus size={15} /> 批量导入缩略图</button><button className="primary" onClick={() => patternInputRef.current?.click()} disabled={isWorking}><FileUp size={17} /> {isWorking && patternImportProgress ? '正在导入…' : '批量导入 PDF'}</button></div></div>
+              <div className="library-toolbar"><div><span className="kicker">PATTERN LIBRARY</span><h3>{patternsReady ? `${patterns.length} 份纸样文件` : '正在读取本地纸样库…'}</h3><p className="migration-help">自动识别名称、尺码和页数；相同 PDF 会按文件指纹自动跳过。</p></div><div className="library-actions"><button onClick={exportPatternMigration} disabled={isWorking || !patternsReady || pendingPatternSaves > 0 || !patterns.length}><Download size={15} /> 导出本地数据</button><button onClick={() => patternMigrationInputRef.current?.click()} disabled={isWorking || !patternsReady}><FileUp size={15} /> 导入迁移包</button><button onClick={() => patternCoverBatchInputRef.current?.click()} disabled={isWorking || !patternsReady || pendingPatternSaves > 0 || !patterns.length}><ImagePlus size={15} /> 批量导入缩略图</button><button className="primary" onClick={() => patternInputRef.current?.click()} disabled={isWorking || !patternsReady}><FileUp size={17} /> {isWorking && patternImportProgress ? '正在导入…' : '批量导入 PDF'}</button></div></div>
+              <p className="pattern-storage-note">PDF、缩略图和资料保存在当前浏览器的本地数据库，刷新或重启网站后会自动读取。固定使用 <b>{window.location.origin}</b>；localhost 与 127.0.0.1 的资料互不相通。{persistentStorage ? '已启用持久存储保护。' : '建议定期导出本地数据备份，清除网站数据仍会删除资料。'}</p>
+              {patternLoadError && <div className="error-message">{patternLoadError}<button onClick={() => setPatternReloadKey((value) => value + 1)}>重新读取</button></div>}
               {migrationNotice && <div className="success-message">{migrationNotice}</div>}
               {patternImportProgress && <div className="pattern-import-progress"><div><span>正在处理 {patternImportProgress.current} / {patternImportProgress.total}</span><span>已导入 {patternImportProgress.added} · 重复跳过 {patternImportProgress.skipped}</span></div><progress max={patternImportProgress.total} value={patternImportProgress.current} /></div>}
               {patterns.length > 0 && <div className="pattern-library-filters"><label className="pattern-search"><Search size={15} /><input value={patternSearch} onChange={(event) => setPatternSearch(event.target.value)} placeholder="搜索名称、文件名或尺码" /></label><div className="pattern-tags"><button className={patternTagFilter === 'all' ? 'active' : ''} onClick={() => setPatternTagFilter('all')}>全部</button>{patternTags.map((tag) => <button key={tag} className={patternTagFilter === tag ? 'active' : ''} onClick={() => setPatternTagFilter(tag)}>{tag}</button>)}</div><span className="pattern-result-count">显示 {filteredPatterns.length} / {patterns.length}</span></div>}
-              {patterns.length === 0 ? <button className="empty-library" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); importPatterns(event.dataTransfer.files) }} onClick={() => patternInputRef.current?.click()}><span className="upload-icon"><FileText /></span><h3>还没有纸样记录</h3><p>点击或拖入 PDF，系统会从文件名自动识别纸样名称、尺码和页数。</p><small>示例：小红叶858上衣-M.pdf → 小红叶858上衣 · M</small></button> : filteredPatterns.length === 0 ? <div className="pattern-filter-empty">没有匹配的纸样记录，请更换搜索词或标签。</div> : <div className="pattern-grid">{filteredPatterns.map((pattern) => <article className="pattern-library-card" key={pattern.id}><div className="pattern-cover"><button className="pattern-cover-preview" onClick={() => setPreviewPattern(pattern)}><img src={pattern.cover} alt={pattern.title} /><span>点击查看大图</span></button><button className="pattern-cover-change" onClick={() => { setCoverPatternId(pattern.id); requestAnimationFrame(() => patternCoverInputRef.current?.click()) }}><ImagePlus size={14} /> 更换缩略图</button><span>{pattern.size}</span></div><div className="pattern-card-content"><input className="pattern-title-input" value={pattern.title} onChange={(event) => updatePattern(pattern.id, 'title', event.target.value)} aria-label="纸样标题" /><label>尺码<input value={pattern.size} onChange={(event) => updatePattern(pattern.id, 'size', event.target.value.toUpperCase())} /></label><label className="pattern-tag-field">分类<select value={pattern.tag || ''} onChange={(event) => updatePattern(pattern.id, 'tag', event.target.value)}><option value="">未分类</option>{patternTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label><div className="pattern-file-meta"><span><FileText size={13} /> {pattern.fileName}</span><small>{pattern.pageCount} 页 · {formatBytes(pattern.fileSize)}</small></div><div className="pattern-actions"><button onClick={() => downloadPattern(pattern)}><Download size={14} /> 下载 PDF</button><span><Save size={13} /> 自动保存</span><button className="danger" title="删除纸样" onClick={() => removePattern(pattern)}><Trash2 size={15} /></button></div></div></article>)}</div>}
+              {!patternsReady ? <div className="pattern-filter-empty" role="status">{patternLoadError ? '本地纸样库尚未读取成功，请重试。' : '正在读取并恢复本地纸样，请稍候…'}</div> : patterns.length === 0 ? <button className="empty-library" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); importPatterns(event.dataTransfer.files) }} onClick={() => patternInputRef.current?.click()}><span className="upload-icon"><FileText /></span><h3>还没有纸样记录</h3><p>点击或拖入 PDF，系统会从文件名自动识别纸样名称、尺码和页数。</p><small>示例：小红叶858上衣-M.pdf → 小红叶858上衣 · M</small></button> : filteredPatterns.length === 0 ? <div className="pattern-filter-empty">没有匹配的纸样记录，请更换搜索词或标签。</div> : <div className="pattern-grid">{filteredPatterns.map((pattern) => <article className="pattern-library-card" key={pattern.id}><div className="pattern-cover"><button className="pattern-cover-preview" onClick={() => setPreviewPattern(pattern)}><img src={pattern.cover} alt={pattern.title} /><span>点击查看大图</span></button><button className="pattern-cover-change" onClick={() => { setCoverPatternId(pattern.id); requestAnimationFrame(() => patternCoverInputRef.current?.click()) }}><ImagePlus size={14} /> 更换缩略图</button><span>{pattern.size}</span></div><div className="pattern-card-content"><input className="pattern-title-input" value={pattern.title} onChange={(event) => updatePattern(pattern.id, 'title', event.target.value)} aria-label="纸样标题" /><label>尺码<input value={pattern.size} onChange={(event) => updatePattern(pattern.id, 'size', event.target.value.toUpperCase())} /></label><label className="pattern-tag-field">分类<select value={pattern.tag || ''} onChange={(event) => updatePattern(pattern.id, 'tag', event.target.value)}><option value="">未分类</option>{patternTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label><div className="pattern-file-meta"><span><FileText size={13} /> {pattern.fileName}</span><small>{pattern.pageCount} 页 · {formatBytes(pattern.fileSize)}</small></div><div className="pattern-actions"><button onClick={() => downloadPattern(pattern)}><Download size={14} /> 下载 PDF</button><span><Save size={13} /> {patternSaveErrors.includes(pattern.id) ? '保存失败' : pendingPatternSaves ? '正在保存…' : '已保存到本地'}</span>{patternSaveErrors.includes(pattern.id) && <button onClick={() => { void persistPatternChanges([{ id: pattern.id, changes: pattern }]).catch(() => {}) }}>重试保存</button>}<button className="danger" title="删除纸样" onClick={() => removePattern(pattern)}><Trash2 size={15} /></button></div></div></article>)}</div>}
               {previewPattern && <div className="pattern-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewPattern(null) }}><div className="pattern-preview-modal" role="dialog" aria-modal="true" aria-label="纸样缩略图大图预览"><div className="pattern-preview-heading"><div><span className="kicker">PATTERN PREVIEW</span><h3>{previewPattern.title}</h3><p>{previewPattern.size} · {previewPattern.pageCount} 页 · {previewPattern.tag || '未分类'}</p></div><button className="modal-close" onClick={() => setPreviewPattern(null)}><X /></button></div><img src={previewPattern.coverLarge || previewPattern.cover} alt={previewPattern.title} /></div></div>}
             </div>}
 
@@ -660,14 +703,10 @@ type ProjectionStep = 'calibrate' | 'display'
 type ProjectionColorMode = 'white' | 'dark'
 type ProjectionLine = { start: { x: number; y: number }; end: { x: number; y: number } }
 type ProjectionFlipAxis = { index: number; x: number; y: number; angle: number }
-type CalibrationCorner = { x: number; y: number }
-
-const defaultCalibrationCorners: CalibrationCorner[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]
-
 function readProjectionCalibration() {
   try {
     const saved = JSON.parse(localStorage.getItem('caifengbao-projection-calibration') || 'null') as { widthCm?: number; heightCm?: number; pixelsPerCm?: number; corners?: CalibrationCorner[] } | null
-    if (saved?.corners?.length === 4) return { widthCm: saved.widthCm || 24, heightCm: saved.heightCm || 16, pixelsPerCm: saved.pixelsPerCm || 42, corners: saved.corners }
+    if (saved?.corners && isValidCalibration(saved.corners)) return { widthCm: saved.widthCm && Number.isFinite(saved.widthCm) && saved.widthCm >= 1 ? saved.widthCm : 24, heightCm: saved.heightCm && Number.isFinite(saved.heightCm) && saved.heightCm >= 1 ? saved.heightCm : 16, pixelsPerCm: saved.pixelsPerCm && Number.isFinite(saved.pixelsPerCm) && saved.pixelsPerCm > 0 ? saved.pixelsPerCm : 42, corners: saved.corners }
   } catch { /* 使用默认校准值 */ }
   return { widthCm: 24, heightCm: 16, pixelsPerCm: 42, corners: defaultCalibrationCorners }
 }
@@ -698,9 +737,18 @@ function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, ve
   const [step, setStep] = useState<ProjectionStep>('calibrate')
   const [widthCm, setWidthCm] = useState(savedCalibration.widthCm)
   const [heightCm, setHeightCm] = useState(savedCalibration.heightCm)
-  const [pixelsPerCm, setPixelsPerCm] = useState(savedCalibration.pixelsPerCm)
+  const pixelsPerCm = savedCalibration.pixelsPerCm
   const [corners, setCorners] = useState<CalibrationCorner[]>(savedCalibration.corners)
   const [draggingCorner, setDraggingCorner] = useState<number | null>(null)
+  const [selectedCorner, setSelectedCorner] = useState(0)
+  const [perspective, setPerspective] = useState(!isRectangle(savedCalibration.corners))
+  const [nudgeStep, setNudgeStep] = useState(0.1)
+  const [measuredWidth, setMeasuredWidth] = useState('')
+  const [measuredHeight, setMeasuredHeight] = useState('')
+  const [calibrationMessage, setCalibrationMessage] = useState('')
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fullscreenError, setFullscreenError] = useState('')
+  const cornerDragOrigin = useRef({ clientX: 0, clientY: 0, x: 0, y: 0 })
   const [colorMode, setColorMode] = useState<ProjectionColorMode>('white')
   const [lineWidth, setLineWidth] = useState(1)
   const [flipX, setFlipX] = useState(false)
@@ -725,6 +773,26 @@ function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, ve
   useEffect(() => {
     localStorage.setItem('caifengbao-projection-calibration', JSON.stringify({ widthCm, heightCm, pixelsPerCm, corners, savedAt: new Date().toISOString() }))
   }, [widthCm, heightCm, pixelsPerCm, corners])
+
+  useEffect(() => {
+    if (step !== 'display') return
+    const previousOverflow = document.body.style.overflow
+    const previousOverscroll = document.documentElement.style.overscrollBehavior
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overscrollBehavior = 'none'
+    const display = projectionDisplayRef.current
+    const preventScroll = (event: WheelEvent) => event.preventDefault()
+    const syncFullscreen = () => setIsFullscreen(document.fullscreenElement === display)
+    display?.addEventListener('wheel', preventScroll, { passive: false })
+    document.addEventListener('fullscreenchange', syncFullscreen)
+    syncFullscreen()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.documentElement.style.overscrollBehavior = previousOverscroll
+      display?.removeEventListener('wheel', preventScroll)
+      document.removeEventListener('fullscreenchange', syncFullscreen)
+    }
+  }, [step])
 
   const calibrationWidth = widthCm * pixelsPerCm
   const calibrationHeight = heightCm * pixelsPerCm
@@ -754,9 +822,35 @@ function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, ve
   function updateCalibrationCorner(event: React.PointerEvent<SVGSVGElement>) {
     if (draggingCorner === null || !calibrationRef.current) return
     const rect = calibrationRef.current.getBoundingClientRect()
-    const x = Math.min(1.5, Math.max(-0.5, (event.clientX - rect.left) / Math.max(1, rect.width)))
-    const y = Math.min(1.5, Math.max(-0.5, (event.clientY - rect.top) / Math.max(1, rect.height)))
-    setCorners((old) => old.map((corner, index) => index === draggingCorner ? { x, y } : corner))
+    const origin = cornerDragOrigin.current
+    const sensitivity = event.shiftKey ? 0.1 : 1
+    const point = {
+      x: origin.x + (event.clientX - origin.clientX) * sensitivity / rect.width,
+      y: origin.y + (event.clientY - origin.clientY) * sensitivity / rect.height,
+    }
+    // Incremental movement avoids a jump when grabbing the edge of a handle or toggling Shift.
+    cornerDragOrigin.current = { clientX: event.clientX, clientY: event.clientY, ...point }
+    setCorners((old) => {
+      const next = moveCalibrationCorner(old, draggingCorner, point, perspective)
+      return isValidCalibration(next) ? next : old
+    })
+  }
+
+  function nudgeCorner(dx: number, dy: number) {
+    setCorners((old) => {
+      const point = { x: old[selectedCorner].x + dx / calibrationWidth, y: old[selectedCorner].y + dy / calibrationHeight }
+      const next = moveCalibrationCorner(old, selectedCorner, point, perspective)
+      return isValidCalibration(next) ? next : old
+    })
+  }
+
+  function applyMeasuredSize() {
+    const corrected = correctMeasuredSize(corners, widthCm, heightCm, Number(measuredWidth), Number(measuredHeight))
+    if (!corrected) { setCalibrationMessage('请填写大于 0 的实际测量宽高。'); return }
+    setCorners(corrected)
+    setMeasuredWidth('')
+    setMeasuredHeight('')
+    setCalibrationMessage('已按实测尺寸修正，请重新测量验证；有偏差可再次修正。')
   }
 
   function pointInProjection(event: React.PointerEvent<HTMLDivElement>) {
@@ -846,17 +940,74 @@ function ProjectionFeature({ pages, files, direction, perLine, horizontalGap, ve
   }
 
   async function toggleFullscreen() {
-    if (document.fullscreenElement) await document.exitFullscreen()
-    else await projectionDisplayRef.current?.requestFullscreen()
+    try {
+      setFullscreenError('')
+      if (document.fullscreenElement) await document.exitFullscreen()
+      else await projectionDisplayRef.current?.requestFullscreen()
+    } catch { setFullscreenError('浏览器未能切换全屏，请再次点击全屏按钮。') }
   }
 
   return <div className={`projection-feature ${step === 'display' ? 'projection-display-mode' : 'projection-calibration-mode'}`}>
     {step === 'calibrate' ? <div className="projection-calibration">
-      <div className="projection-stepbar"><div><span className="kicker">PROJECTION · 01</span><h3>校准投影尺寸</h3><p>24×16 cm 只是比例参考框，不要求纸样都落在框内。把四个角拖到桌面上对应的投影角点，纸样会沿用这套比例和梯形校正。</p></div><button className="primary" onClick={finishCalibration}>完成校准 <Maximize2 size={15} /></button></div>
-      <div className="calibration-stage"><div className="calibration-ruler horizontal"><span>0</span><b>{widthCm.toFixed(1)} cm</b></div><div ref={calibrationRef} className="calibration-rectangle" style={{ width: calibrationWidth, height: calibrationHeight }}><div className="calibration-grid" /><svg className="calibration-quad" viewBox={`0 0 ${calibrationWidth} ${calibrationHeight}`} onPointerMove={updateCalibrationCorner} onPointerUp={() => setDraggingCorner(null)} onPointerCancel={() => setDraggingCorner(null)}><polygon points={corners.map((corner) => `${corner.x * calibrationWidth},${corner.y * calibrationHeight}`).join(' ')} /><text x={calibrationWidth / 2} y={calibrationHeight - 14}>{widthCm.toFixed(1)} cm</text><text x={calibrationWidth - 14} y={calibrationHeight / 2} transform={`rotate(-90 ${calibrationWidth - 14} ${calibrationHeight / 2})`}>{heightCm.toFixed(1)} cm</text>{corners.map((corner, index) => <circle key={index} cx={corner.x * calibrationWidth} cy={corner.y * calibrationHeight} r={9} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setDraggingCorner(index); event.currentTarget.setPointerCapture(event.pointerId) }} />)}</svg><div className="calibration-corner-names"><span>左上</span><span>右上</span><span>右下</span><span>左下</span></div></div></div>
-      <div className="calibration-controls"><label>宽度<input type="number" min="1" step="0.1" value={widthCm} onChange={(event) => setWidthCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><label>高度<input type="number" min="1" step="0.1" value={heightCm} onChange={(event) => setHeightCm(Math.max(1, Number(event.target.value) || 1))} /><span>cm</span></label><button className="reset-crop" onClick={() => setCorners(defaultCalibrationCorners)}>恢复矩形</button><div className="calibration-readout">当前比例 <b>{pixelsPerCm.toFixed(1)} px / cm</b><small>四角只用于比例和梯形校正，纸样可超出参考框</small></div></div>
+      <div className="projection-stepbar"><div><span className="kicker">PROJECTION · 01</span><h3>校准投影尺寸</h3><p>先填参考纸的真实宽高。推荐保持矩形，再用卷尺测量四个十字中心围成的投影框，输入实测尺寸修正比例；投影仪斜投时才启用四角梯形校正。</p></div><button className="primary" onClick={finishCalibration}>完成校准 <Maximize2 size={15} /></button></div>
+      <div className="calibration-controls">
+        <label>参考宽度<input aria-label="参考宽度" type="number" min="1" step="0.1" value={widthCm} onChange={(event) => { setWidthCm(Math.max(1, Number(event.target.value) || 1)); setMeasuredWidth(''); setMeasuredHeight('') }} /><span>cm</span></label>
+        <label>参考高度<input aria-label="参考高度" type="number" min="1" step="0.1" value={heightCm} onChange={(event) => { setHeightCm(Math.max(1, Number(event.target.value) || 1)); setMeasuredWidth(''); setMeasuredHeight('') }} /><span>cm</span></label>
+        <button className="reset-crop" onClick={() => { setWidthCm(10); setHeightCm(10); setMeasuredWidth(''); setMeasuredHeight('') }}>10 × 10 cm 参考纸</button>
+        <label>校准方式<select aria-label="校准方式" value={perspective ? 'perspective' : 'rectangle'} onChange={(event) => {
+          const enabled = event.target.value === 'perspective'
+          setPerspective(enabled)
+          setMeasuredWidth(''); setMeasuredHeight(''); setCalibrationMessage('')
+          if (!enabled) setCorners((old) => {
+            const left = Math.min(...old.map((point) => point.x)); const right = Math.max(...old.map((point) => point.x))
+            const top = Math.min(...old.map((point) => point.y)); const bottom = Math.max(...old.map((point) => point.y))
+            return [{ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom }]
+          })
+        }}><option value="rectangle">保持矩形（推荐正投使用）</option><option value="perspective">四角梯形校正（斜投）</option></select></label>
+        <button className="reset-crop" onClick={() => { setCorners(defaultCalibrationCorners); setPerspective(false); setMeasuredWidth(''); setMeasuredHeight(''); setCalibrationMessage('') }}>恢复矩形</button>
+      </div>
+      <div className="calibration-stage"><div ref={calibrationRef} className="calibration-rectangle" style={{ width: calibrationWidth, height: calibrationHeight }}>
+        <div className="calibration-grid" style={{ transform: projectionTransform, transformOrigin: '0 0' }} />
+        <svg className="calibration-quad" viewBox={`0 0 ${calibrationWidth} ${calibrationHeight}`} onPointerMove={updateCalibrationCorner} onPointerUp={() => setDraggingCorner(null)} onPointerCancel={() => setDraggingCorner(null)} onLostPointerCapture={() => setDraggingCorner(null)}>
+          <polygon points={corners.map((corner) => `${corner.x * calibrationWidth},${corner.y * calibrationHeight}`).join(' ')} />
+          <text x={(corners[3].x + corners[2].x) * calibrationWidth / 2} y={(corners[3].y + corners[2].y) * calibrationHeight / 2 - 14}>{widthCm.toFixed(1)} cm</text>
+          <text x={(corners[1].x + corners[2].x) * calibrationWidth / 2 - 14} y={(corners[1].y + corners[2].y) * calibrationHeight / 2}>{heightCm.toFixed(1)} cm</text>
+          {corners.map((corner, index) => <g key={index}>
+            <circle className={selectedCorner === index ? 'selected' : ''} aria-label={`拖动${['左上', '右上', '右下', '左下'][index]}角`} cx={corner.x * calibrationWidth} cy={corner.y * calibrationHeight} r={12} onPointerDown={(event) => {
+              event.preventDefault(); event.stopPropagation(); setSelectedCorner(index); setDraggingCorner(index)
+              cornerDragOrigin.current = { clientX: event.clientX, clientY: event.clientY, x: corner.x, y: corner.y }
+              event.currentTarget.setPointerCapture(event.pointerId)
+            }} />
+            <path className="calibration-crosshair" d={`M${corner.x * calibrationWidth - 7},${corner.y * calibrationHeight}h14 M${corner.x * calibrationWidth},${corner.y * calibrationHeight - 7}v14`} />
+          </g>)}
+        </svg>
+      </div></div>
+      <div className="calibration-precision" onKeyDown={(event) => {
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return
+        const movement: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
+        if (!movement[event.key]) return
+        event.preventDefault()
+        const [dx, dy] = movement[event.key]; nudgeCorner(dx * nudgeStep, dy * nudgeStep)
+      }}>
+        <div className="calibration-fine-controls" role="group" aria-label="角点微调" tabIndex={0}>
+          <b>角点微调</b>
+          <select aria-label="选择角点" value={selectedCorner} onChange={(event) => setSelectedCorner(Number(event.target.value))}>{['左上', '右上', '右下', '左下'].map((name, index) => <option key={name} value={index}>{name}</option>)}</select>
+          <select aria-label="微调步长" value={nudgeStep} onChange={(event) => setNudgeStep(Number(event.target.value))}><option value={0.1}>0.1 px / 次</option><option value={0.5}>0.5 px / 次</option><option value={1}>1 px / 次</option></select>
+          <button aria-label="角点向左微调" onClick={() => nudgeCorner(-nudgeStep, 0)}>←</button><button aria-label="角点向上微调" onClick={() => nudgeCorner(0, -nudgeStep)}>↑</button><button aria-label="角点向下微调" onClick={() => nudgeCorner(0, nudgeStep)}>↓</button><button aria-label="角点向右微调" onClick={() => nudgeCorner(nudgeStep, 0)}>→</button>
+          <span>选中角点后可在此用方向键微调；Shift + 拖动降为 1/10 速度。对准十字中心。</span>
+        </div>
+        {!perspective && <div className="calibration-measure-controls">
+          <b>按实测尺寸修正</b>
+          <label>投影框实测宽<input aria-label="投影框实测宽" type="number" min="0.01" step="0.01" placeholder="例如 9.8" value={measuredWidth} onChange={(event) => { setMeasuredWidth(event.target.value); setCalibrationMessage('') }} /> cm</label>
+          <label>投影框实测高<input aria-label="投影框实测高" type="number" min="0.01" step="0.01" placeholder="例如 9.9" value={measuredHeight} onChange={(event) => { setMeasuredHeight(event.target.value); setCalibrationMessage('') }} /> cm</label>
+          <button className="reset-crop" onClick={applyMeasuredSize}>修正比例</button>
+        </div>}
+        <p role="status">{calibrationMessage}</p>
+        <p>10 × 10 cm 的小纸可以初校。完成后建议改用 30–50 cm 的已知距离（卷尺或拼接参考纸）复测四边及对角线，降低误差放大；斜投时尤其需要较大的参考范围。校准后请保持投影仪位置、分辨率与浏览器缩放不变。</p>
+      </div>
     </div> : <div ref={projectionDisplayRef} className={`projection-display ${colorMode === 'dark' ? 'projection-dark' : 'projection-white'} ${magnifier ? 'has-magnifier' : ''}`}>
-      <div className="projection-toolbar"><button title="返回校准" onClick={() => setStep('calibrate')}><Ruler size={15} /></button><button title="页面/线条颜色切换" onClick={() => setColorMode((mode) => mode === 'white' ? 'dark' : 'white')}><Palette size={15} /></button><div className="projection-overlap-control" title="横向重叠"><span>横重</span><button onClick={() => onHorizontalGap(Math.max(0, horizontalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={horizontalGap} onChange={(event) => onHorizontalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onHorizontalGap(horizontalGap + 1)}>＋</button><small>mm</small></div><div className="projection-overlap-control" title="纵向重叠"><span>纵重</span><button onClick={() => onVerticalGap(Math.max(0, verticalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={verticalGap} onChange={(event) => onVerticalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onVerticalGap(verticalGap + 1)}>＋</button><small>mm</small></div><label className="line-width-control" title="线条粗细"><Split size={15} /><select value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))}>{Array.from({ length: 8 }, (_, value) => <option key={value} value={value}>{value}px</option>)}</select></label><button title="水平翻转" onClick={() => setFlipX((value) => !value)}><FlipHorizontal2 size={15} /></button><button title="垂直翻转" onClick={() => setFlipY((value) => !value)}><FlipVertical2 size={15} /></button><button title="旋转90度" onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw size={15} /></button><button className={magnifier ? 'active' : ''} title="放大镜（不改变页面实际比例）" onClick={() => setMagnifier((value) => !value)}><Search size={15} /></button><button className={lineTool ? 'active' : ''} title="线工具：拖动添加方向线" onClick={() => setLineTool((value) => !value)}><Split size={15} /></button><span className="projection-status">已校准 {widthCm.toFixed(1)} × {heightCm.toFixed(1)} cm · 页面禁止缩放</span><button className="projection-exit" title="全屏/退出全屏" onClick={toggleFullscreen}><Maximize2 size={15} /></button></div>
+      <div className="projection-toolbar"><button title="返回校准" onClick={() => setStep('calibrate')}><Ruler size={15} /></button><button title="页面/线条颜色切换" onClick={() => setColorMode((mode) => mode === 'white' ? 'dark' : 'white')}><Palette size={15} /></button><div className="projection-overlap-control" title="横向重叠"><span>横重</span><button onClick={() => onHorizontalGap(Math.max(0, horizontalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={horizontalGap} onChange={(event) => onHorizontalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onHorizontalGap(horizontalGap + 1)}>＋</button><small>mm</small></div><div className="projection-overlap-control" title="纵向重叠"><span>纵重</span><button onClick={() => onVerticalGap(Math.max(0, verticalGap - 1))}>−</button><input type="number" min="0" step="0.5" value={verticalGap} onChange={(event) => onVerticalGap(Math.max(0, Number(event.target.value) || 0))} /><button onClick={() => onVerticalGap(verticalGap + 1)}>＋</button><small>mm</small></div><label className="line-width-control" title="线条粗细"><Split size={15} /><select value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))}>{Array.from({ length: 8 }, (_, value) => <option key={value} value={value}>{value}px</option>)}</select></label><button title="水平翻转" onClick={() => setFlipX((value) => !value)}><FlipHorizontal2 size={15} /></button><button title="垂直翻转" onClick={() => setFlipY((value) => !value)}><FlipVertical2 size={15} /></button><button title="旋转90度" onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw size={15} /></button><button className={magnifier ? 'active' : ''} title="放大镜（不改变页面实际比例）" onClick={() => setMagnifier((value) => !value)}><Search size={15} /></button><button className={lineTool ? 'active' : ''} title="线工具：拖动添加方向线" onClick={() => setLineTool((value) => !value)}><Split size={15} /></button><span className="projection-status">已校准 {widthCm.toFixed(1)} × {heightCm.toFixed(1)} cm · 页面禁止缩放</span><button className={`projection-exit ${isFullscreen ? 'active' : ''}`} title={isFullscreen ? '退出全屏' : '进入全屏'} aria-label={isFullscreen ? '退出全屏' : '进入全屏'} aria-pressed={isFullscreen} onClick={toggleFullscreen}><Maximize2 size={15} /></button></div>
+      {fullscreenError && <p className="projection-fullscreen-error" role="alert">{fullscreenError}</p>}
       {lines.length > 0 && <div className="projection-line-toolbar"><span className="projection-line-count"><b>{lines.length}</b><small>lines</small></span><button title="删除当前线条" onClick={deleteSelectedLine}><Trash2 size={18} /></button><button title="上一个线条" onClick={() => selectAdjacentLine(-1)}>‹</button><button title="下一个线条" onClick={() => selectAdjacentLine(1)}>›</button><button className={patternFlipAxis?.index === selectedLineIndex ? 'active' : ''} title="沿当前线条翻转纸样" onClick={flipPatternAlongSelectedLine}><FlipHorizontal2 size={18} /></button><button title="按箭头方向移动纸样和线条" onClick={movePatternAlongSelectedLine}><ArrowRight size={18} /></button></div>}
       <div ref={projectionRef} className={`projection-canvas ${lineTool ? 'line-tool-active' : draggingPan ? 'pan-active' : ''}`} style={{ minWidth: projectionWidth, minHeight: projectionHeight, left: pan.x, top: pan.y }} onPointerDown={(event) => { if (lineTool) { event.currentTarget.setPointerCapture(event.pointerId); const point = pointInProjection(event); setDrawingLine(true); setSelectedLineIndex(lines.length); setLines((old) => [...old, { start: point, end: point }]) } else startPan(event) }} onPointerMove={(event) => { const point = pointInProjection(event); setMagnifierPoint(point); if (drawingLine) setLines((old) => old.map((line, index) => index === selectedLineIndex ? { ...line, end: point } : line)); updatePan(event) }} onPointerUp={(event) => { if (drawingLine && selectedLineIndex >= 0) { const current = lines[selectedLineIndex]; if (current && Math.hypot(current.end.x - current.start.x, current.end.y - current.start.y) < 3) { setLines((old) => old.filter((_, index) => index !== selectedLineIndex)); setSelectedLineIndex((old) => Math.max(-1, old - 1)) } } setDrawingLine(false); setLineTool(false); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); setDraggingPan(false) }} onPointerCancel={() => { setDrawingLine(false); setLineTool(false); setDraggingPan(false) }}><div className="projection-art" style={{ width: projectionWidth, height: projectionHeight, transform: projectionTransform }}><div className="projection-view-transform" style={{ width: projectionWidth, height: projectionHeight, transform: `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})` }}><div className="projection-pages-layer" style={{ width: projectionWidth, height: projectionHeight, transformOrigin: patternFlipAxis ? `${patternFlipAxis.x}px ${patternFlipAxis.y}px` : 'center center', transform: `${patternFlipAxis ? `rotate(${patternFlipAxis.angle}deg) scale(1, -1) rotate(${-patternFlipAxis.angle}deg)` : ''} translate(${patternOffset.x}px, ${patternOffset.y}px)` }}>{renderProjectionPages()}</div><svg ref={projectionLineRef} className="projection-line-overlay" width={projectionWidth} height={projectionHeight}><defs><marker id="projection-line-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4.5 L0,9 Z" fill="context-stroke" /></marker></defs>{lines.map((line, index) => <g key={index} className={index === selectedLineIndex ? 'selected' : ''}><line x1={line.start.x} y1={line.start.y} x2={line.end.x} y2={line.end.y} markerEnd="url(#projection-line-arrow)" /><text x={(line.start.x + line.end.x) / 2} y={(line.start.y + line.end.y) / 2 - 8}>line{index + 1} · {(Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y) / pixelsPerCm).toFixed(1)} cm</text></g>)}</svg>{magnifier && <div className="projection-lens" style={{ left: magnifierPoint.x - 80, top: magnifierPoint.y - 80 }}><div className="projection-lens-content" style={{ width: projectionWidth, height: projectionHeight, left: 80 - magnifierPoint.x * 2, top: 80 - magnifierPoint.y * 2 }}>{renderProjectionPages()}</div></div>}</div></div></div>
     </div>}
